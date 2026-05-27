@@ -274,17 +274,9 @@ def _signal_card(check: dict, expanded: bool = False) -> None:
 
 import re
 
-from streamlit.components.v1 import declare_component
-
 from paperfraud.web.image_utils import (
     get_output_subdirs,
     load_image_for_web,
-)
-
-# Custom component: interactive image region selector (Canvas with draw+drag)
-_image_selector_component = declare_component(
-    "image_selector",
-    path=Path(__file__).parent / "image_selector",
 )
 
 KNOWN_SUBDIRS = {
@@ -398,65 +390,303 @@ def _find_original(forensic_name: str, suffix: str) -> Path | None:
     return None
 
 
-def _crop_image(img, x_pct: float, y_pct: float, w_pct: float, h_pct: float):
-    """Crop a PIL image to the given percentage region."""
-    w, h = img.size
-    left = int(w * x_pct / 100)
-    top = int(h * y_pct / 100)
-    right = int(w * (x_pct + w_pct) / 100)
-    bottom = int(h * (y_pct + h_pct) / 100)
-    left, top = max(0, left), max(0, top)
-    right, bottom = min(w, right), min(h, bottom)
-    if right <= left or bottom <= top:
-        return img
-    return img.crop((left, top, right, bottom))
+def _encode_data_url(path: Path, max_width: int | None = None, *, prefer_jpeg: bool = False) -> str:
+    """Convert an image file to a base64 data URL, optionally downsizing.
 
+    Args:
+        path: Image file path.
+        max_width: If set and image is wider, resize to this width.
+        prefer_jpeg: If True and the image is RGB, use JPEG quality=85
+            instead of PNG. JPEG reduces size by ~70% vs PNG for photos,
+            critical for avoiding 10MB+ HTML over WebSocket.
 
-def _image_selector(ref_path: Path, key: str):
-    """Interactive canvas widget for selecting a crop region by drawing a box.
-
-    Uses declare_component (not st.components.v1.html) for proper bidirectional
-    communication. The component is keyed by ref_path so Streamlit destroys and
-    recreates the iframe when the user switches images — auto-clearing the crop.
-    Coordinates are only sent on mouseup (not mousemove) to avoid excessive
-    Python-side rerenders.
-
-    Returns (x, y, w, h) in percentages, or None.
+            Non-RGB images (RGBA, P, grayscale) always use PNG to preserve
+            transparency/color mode fidelity.
     """
     import base64
     from io import BytesIO
 
     from PIL import Image
 
-    # Load + resize reference image for canvas (max 700px wide)
-    img = Image.open(ref_path)
-    max_w = 700
-    if img.width > max_w:
-        ratio = max_w / img.width
-        img = img.resize((max_w, int(img.height * ratio)), Image.LANCZOS)
+    img = Image.open(path)
+    if max_width and img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
 
     buf = BytesIO()
-    img.save(buf, format="PNG")
-    data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    if prefer_jpeg and img.mode == "RGB":
+        img.save(buf, format="JPEG", quality=85)
+        mime = "image/jpeg"
+    else:
+        img.save(buf, format="PNG")
+        mime = "image/png"
+    return f"data:{mime};base64," + base64.b64encode(buf.getvalue()).decode()
 
-    result = _image_selector_component(
-        image_data_url=data_url,
-        key=str(ref_path),
-        default=None,
-    )
 
-    if isinstance(result, dict) and all(k in result for k in ("x", "y", "w", "h")):
-        w = float(result["w"])
-        h = float(result["h"])
-        if w > 0 and h > 0:
-            st.session_state[f"{key}_crop"] = (
-                float(result["x"]), float(result["y"]), w, h,
-            )
-            return st.session_state[f"{key}_crop"]
+def _render_zoom_iframe(ref_path: Path, images: list[tuple[str, Path]], key: str, *, grid_cols: int = 2) -> None:
+    """Render a self-contained iframe with Canvas selector + zoomed crop panels.
 
-    # Component returned None (no crop / cleared / switched image)
-    st.session_state.pop(f"{key}_crop", None)
-    return None
+    All image rendering (reference thumbnail + zoomed crops) happens inside
+    the iframe via Canvas 2D.  No JS→Python communication is needed — the
+    iframe is entirely self-contained.
+
+    Args:
+        ref_path: Path to the reference image (resized to 300px wide as PNG).
+        images: List of (label, path) tuples for the zoom panels.
+        key: Unique key for this instance (e.g. "lut", "ela", "clone").
+        grid_cols: Number of columns in the right-side zoom grid.
+    """
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    # ── Reference thumbnail (300px, PNG) ─────────────────────────────────
+    ref_data_url = _encode_data_url(ref_path, max_width=300, prefer_jpeg=False)
+    ref_img = Image.open(ref_path)
+    ref_w = min(300, ref_img.width)
+    ref_h = int(ref_img.height * (ref_w / ref_img.width))
+
+    # ── Analysis images (max 1200px, JPEG for RGB) ───────────────────────
+    img_entries: list[dict] = []
+    for label, img_path in images:
+        if img_path.exists():
+            img_entries.append({
+                "label": label,
+                "filename": img_path.name,
+                "dataUrl": _encode_data_url(img_path, max_width=1200, prefer_jpeg=True),
+            })
+
+    images_json = json.dumps(img_entries)
+    ref_json = json.dumps(ref_data_url)
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * {{ box-sizing:border-box; margin:0; padding:0; }}
+  body {{ background:#0e1117; color:#fafafa; font-family:system-ui,sans-serif; user-select:none; }}
+  #s {{ font-size:11px; color:#aaa; padding:4px 8px; background:#1a1a2e; border-bottom:1px solid #333; }}
+  .main {{ display:flex; gap:0; }}
+  .left {{ flex:0 0 300px; padding:6px; }}
+  .left canvas {{ display:block; cursor:crosshair; border-radius:4px; }}
+  .right {{ flex:1; min-width:0; padding:6px; display:flex; flex-direction:column; gap:6px; }}
+  .grid {{ display:grid; gap:6px; }}
+  .panel {{ background:#1a1a2e; border-radius:6px; overflow:hidden; }}
+  .panel-label {{ font-size:12px; color:#aaa; padding:4px 8px; background:#222; }}
+  .panel canvas {{ display:block; width:100%; height:auto; image-rendering:pixelated; }}
+</style></head><body>
+<div id="s">拖拽画框 · 拖动已选框 · 双击清除</div>
+<div class="main">
+  <div class="left"><canvas id="rc"></canvas></div>
+  <div class="right"><div class="grid" id="grid"></div></div>
+</div>
+<script>
+(function(){{
+var IMAGES = {images_json};
+var REF_URL = {ref_json};
+var GRID_COLS = {json.dumps(grid_cols)};
+var KEY = {json.dumps(key)};
+
+var refCanvas = document.getElementById('rc');
+var refCtx = refCanvas.getContext('2d');
+var statusEl = document.getElementById('s');
+var gridEl = document.getElementById('grid');
+var refImg = null;
+var zoomImgs = [];      // {{img, canvas, label}}
+var rect = null;        // px rect on reference canvas
+var currentCropPct = null;  // stored so onload handlers can re-apply after image loads
+var drawing = false, dragging = false;
+var startX = 0, startY = 0, dragOffX = 0, dragOffY = 0;
+var MIN = 6;
+
+// ── setFrameHeight ─────────────────────────────────────────────
+function setHeight() {{
+  var h = document.body.scrollHeight;
+  window.parent.postMessage({{
+    isStreamlitMessage: true,
+    type: 'streamlit:setFrameHeight',
+    height: h
+  }}, '*');
+}}
+
+// ── Reference canvas drawing ────────────────────────────────────
+function drawRef() {{
+  if (!refImg) return;
+  refCtx.clearRect(0, 0, refCanvas.width, refCanvas.height);
+  refCtx.drawImage(refImg, 0, 0);
+  if (!rect || rect.w < MIN || rect.h < MIN) return;
+  refCtx.strokeStyle = '#ff3333'; refCtx.lineWidth = 2;
+  refCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  refCtx.fillStyle = 'rgba(255,50,50,0.12)';
+  refCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
+}}
+
+function inside(mx, my) {{
+  if (!rect) return false;
+  return mx >= rect.x - 6 && mx <= rect.x + rect.w + 6 &&
+         my >= rect.y - 6 && my <= rect.y + rect.h + 6;
+}}
+
+// ── Render a single zoom panel ──────────────────────────────────
+// Called both from updateAllZooms AND from img.onload (which may fire
+// after the user already drew a box — race condition fix).
+function renderZoomToCanvas(imgObj, canvas, cropPct) {{
+  var ctx = canvas.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  var cw = canvas.offsetWidth * dpr;
+  var ch = canvas.offsetHeight * dpr;
+  if (cw < 4 || ch < 4) return;
+  canvas.width = cw;
+  canvas.height = ch;
+
+  if (cropPct && imgObj.naturalWidth && imgObj.naturalHeight) {{
+    ctx.imageSmoothingEnabled = false;
+    var iw = imgObj.naturalWidth, ih = imgObj.naturalHeight;
+    var sx = cropPct.x / 100 * iw;
+    var sy = cropPct.y / 100 * ih;
+    var sw = cropPct.w / 100 * iw;
+    var sh = cropPct.h / 100 * ih;
+    ctx.drawImage(imgObj, sx, sy, sw, sh, 0, 0, cw, ch);
+  }} else {{
+    // No crop or image not yet loaded → show full image
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(imgObj, 0, 0, cw, ch);
+  }}
+}}
+
+function updateAllZooms() {{
+  if (!rect || rect.w < MIN || rect.h < MIN) {{
+    // Clear selection → show full images
+    currentCropPct = null;
+    for (var i = 0; i < zoomImgs.length; i++) {{
+      var zi = zoomImgs[i];
+      renderZoomToCanvas(zi.img, zi.canvas, null);
+    }}
+    statusEl.textContent = '拖拽画框 · 拖动已选框 · 双击清除';
+    return;
+  }}
+  currentCropPct = {{
+    x: rect.x / refCanvas.width * 100,
+    y: rect.y / refCanvas.height * 100,
+    w: rect.w / refCanvas.width * 100,
+    h: rect.h / refCanvas.height * 100
+  }};
+  for (var i = 0; i < zoomImgs.length; i++) {{
+    var zi = zoomImgs[i];
+    renderZoomToCanvas(zi.img, zi.canvas, currentCropPct);
+  }}
+  statusEl.textContent = '选中: ' + currentCropPct.x.toFixed(1) + '%, ' + currentCropPct.y.toFixed(1) +
+    '%, ' + currentCropPct.w.toFixed(1) + '% × ' + currentCropPct.h.toFixed(1) + '%';
+}}
+
+// ── Build zoom panels ───────────────────────────────────────────
+function buildZoomPanels() {{
+  gridEl.style.gridTemplateColumns = 'repeat(' + GRID_COLS + ', 1fr)';
+  gridEl.innerHTML = '';
+  zoomImgs = [];
+  for (var i = 0; i < IMAGES.length; i++) {{
+    var entry = IMAGES[i];
+    var panel = document.createElement('div');
+    panel.className = 'panel';
+    var label = document.createElement('div');
+    label.className = 'panel-label';
+    label.textContent = entry.label;
+    var cv = document.createElement('canvas');
+    cv.style.display = 'block';
+    cv.style.width = '100%';
+    // Fixed aspect ratio for zoom panels
+    cv.style.aspectRatio = '4 / 3';
+    panel.appendChild(label);
+    panel.appendChild(cv);
+    gridEl.appendChild(panel);
+
+    var img = new Image();
+    img.onload = function(canvas, imgObj) {{
+      return function() {{
+        // If the user already drew a box before this image loaded,
+        // render the crop instead of the full image (race-condition fix).
+        requestAnimationFrame(function() {{
+          renderZoomToCanvas(imgObj, canvas, currentCropPct);
+        }});
+      }};
+    }}(cv, img);
+    img.src = entry.dataUrl;
+    zoomImgs.push({{img: img, canvas: cv, label: entry.label}});
+  }}
+  // Re-measure height after panels are built
+  requestAnimationFrame(function() {{ setHeight(); }});
+}}
+
+// ── Mouse events on reference canvas ────────────────────────────
+refCanvas.addEventListener('mousedown', function(e) {{
+  var mx = e.offsetX, my = e.offsetY;
+  if (inside(mx, my)) {{
+    dragging = true;
+    dragOffX = mx - rect.x;
+    dragOffY = my - rect.y;
+  }} else {{
+    drawing = true;
+    rect = {{x: mx, y: my, w: 0, h: 0}};
+    startX = mx; startY = my;
+  }}
+  e.preventDefault();
+}});
+
+refCanvas.addEventListener('mousemove', function(e) {{
+  var mx = e.offsetX, my = e.offsetY;
+  if (drawing) {{
+    rect.x = Math.min(startX, mx);
+    rect.y = Math.min(startY, my);
+    rect.w = Math.abs(mx - startX);
+    rect.h = Math.abs(my - startY);
+    drawRef();
+  }} else if (dragging && rect) {{
+    rect.x = Math.max(0, Math.min(mx - dragOffX, refCanvas.width - rect.w));
+    rect.y = Math.max(0, Math.min(my - dragOffY, refCanvas.height - rect.h));
+    drawRef();
+  }}
+  refCanvas.style.cursor = inside(mx, my) ? 'move' : 'crosshair';
+}});
+
+refCanvas.addEventListener('mouseup', function() {{
+  var didSomething = drawing || dragging;
+  drawing = false; dragging = false;
+  if (didSomething && rect && rect.w >= MIN && rect.h >= MIN) {{
+    updateAllZooms();
+  }}
+}});
+
+refCanvas.addEventListener('dblclick', function() {{
+  rect = null;
+  drawRef();
+  updateAllZooms();
+  statusEl.textContent = '已清除 · 重新拖拽画框';
+}});
+
+refCanvas.addEventListener('mouseleave', function() {{
+  if (drawing || dragging) {{
+    refCanvas.dispatchEvent(new MouseEvent('mouseup'));
+  }}
+}});
+
+// ── Load reference image ────────────────────────────────────────
+refImg = new Image();
+refImg.onload = function() {{
+  refCanvas.width = refImg.naturalWidth;
+  refCanvas.height = refImg.naturalHeight;
+  drawRef();
+  buildZoomPanels();
+  setHeight();
+}};
+refImg.src = REF_URL;
+}})();
+</script></body></html>"""
+
+    # Estimate iframe height: ref image + zoom grid + status bar
+    # Zoom: for 4 images in 2 cols → 2 rows, each canvas ~(container/2)*3/4 tall
+    # Rough estimate: ref_h + rows * 280 + 40
+    n_rows = (len(img_entries) + grid_cols - 1) // grid_cols
+    est_height = ref_h + n_rows * 300 + 60
+    st.components.v1.html(html, height=est_height, scrolling=True)
 
 
 def _lut_viewer(lut_dir: Path) -> None:
@@ -483,56 +713,31 @@ def _lut_viewer(lut_dir: Path) -> None:
     viridis_p = lut_dir / f"{selected}_viridis.png"
 
     original = _find_original(selected, "fire") or _find_original(selected, "royal")
-    ref_img = original if original else (fire_p if fire_p.exists() else (royal_p if royal_p.exists() else viridis_p))
+    ref_path = original if original else (fire_p if fire_p.exists() else (royal_p if royal_p.exists() else viridis_p))
 
-    st.caption("🖱️ 在下方原图上**拖拽画框**选择放大区域，还可**拖动已选框**，**双击**清除")
-    crop = _image_selector(ref_img, "lut")
+    # Build image list for the all-in-iframe widget
+    images: list[tuple[str, Path]] = []
+    if original:
+        images.append(("原始图片", original))
+    else:
+        images.append(("参考图", ref_path))
+    if fire_p.exists():
+        images.append(("Fire/Iron", fire_p))
+    if royal_p.exists():
+        images.append(("Royal", royal_p))
+    if viridis_p.exists():
+        images.append(("Viridis", viridis_p))
 
-    # Row 1: 原始图片 | Fire/Iron
-    row1_cols = st.columns(2)
-    with row1_cols[0]:
-        st.caption("原始图片" if original else "参考图")
-        if original:
-            img = load_image_for_web(original)
-            st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-        else:
-            ref = load_image_for_web(ref_img)
-            st.image(_crop_image(ref, *crop) if crop else ref, use_container_width=True)
-        if original:
-            with open(original, "rb") as f:
-                st.download_button("📥 原图", f.read(), original.name, key="dl_orig_lut")
+    _render_zoom_iframe(ref_path, images, "lut", grid_cols=2)
 
-    with row1_cols[1]:
-        st.caption("Fire/Iron")
-        if fire_p.exists():
-            img = load_image_for_web(fire_p)
-            st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-            with open(fire_p, "rb") as f:
-                st.download_button("📥 Fire", f.read(), fire_p.name, key=f"dl_fire_{selected}")
-        else:
-            st.caption("—")
-
-    # Row 2: Royal | Viridis
-    row2_cols = st.columns(2)
-    with row2_cols[0]:
-        st.caption("Royal")
-        if royal_p.exists():
-            img = load_image_for_web(royal_p)
-            st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-            with open(royal_p, "rb") as f:
-                st.download_button("📥 Royal", f.read(), royal_p.name, key=f"dl_royal_{selected}")
-        else:
-            st.caption("—")
-
-    with row2_cols[1]:
-        st.caption("Viridis")
-        if viridis_p.exists():
-            img = load_image_for_web(viridis_p)
-            st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-            with open(viridis_p, "rb") as f:
-                st.download_button("📥 Viridis", f.read(), viridis_p.name, key=f"dl_viridis_{selected}")
-        else:
-            st.caption("—")
+    # Download buttons (Streamlit-native, outside iframe)
+    st.markdown("---")
+    st.caption("📥 下载原始文件")
+    dl_cols = st.columns(len(images))
+    for i, (label, path) in enumerate(images):
+        with dl_cols[i]:
+            with open(path, "rb") as f:
+                st.download_button(label, f.read(), path.name, key=f"dl_lut_{selected}_{i}")
 
 
 def _clone_viewer(clone_dir: Path) -> None:
@@ -541,7 +746,6 @@ def _clone_viewer(clone_dir: Path) -> None:
         st.info("未发现克隆标记图。")
         return
 
-    # Build filtered filename list using stem-based filtering
     filenames = [f.name for f in files]
     stems = [f.replace("_clone.png", "") for f in filenames]
 
@@ -550,28 +754,22 @@ def _clone_viewer(clone_dir: Path) -> None:
         filenames,
         format_func=lambda x: _image_label(x.replace("_clone.png", ""), stems),
     )
-    if selected:
-        path = clone_dir / selected
-        original = _find_original(selected, "clone")
-        ref_img = original if original else path
+    if not selected:
+        return
 
-        st.caption("🖱️ 在下方原图上**拖拽画框**选择放大区域，还可**拖动已选框**，**双击**清除")
-        crop = _image_selector(ref_img, "clone")
+    path = clone_dir / selected
+    original = _find_original(selected, "clone")
+    ref_path = original if original else path
 
-        cols = st.columns(2 if original else 1)
-        col_idx = 0
-        if original:
-            with cols[0]:
-                st.caption("原始图片")
-                img = load_image_for_web(original)
-                st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-            col_idx = 1
-        with cols[col_idx]:
-            st.caption("克隆标记（红色连线 = 相同区域）")
-            img = load_image_for_web(path)
-            st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-            with open(path, "rb") as f:
-                st.download_button("📥 下载标记图", f.read(), selected, key="dl_clone")
+    images: list[tuple[str, Path]] = []
+    if original:
+        images.append(("原始图片", original))
+    images.append(("克隆标记", path))
+
+    _render_zoom_iframe(ref_path, images, "clone", grid_cols=2)
+
+    with open(path, "rb") as f:
+        st.download_button("📥 下载标记图", f.read(), selected, key="dl_clone")
 
 
 def _ela_viewer(ela_dir: Path) -> None:
@@ -588,29 +786,23 @@ def _ela_viewer(ela_dir: Path) -> None:
         filenames,
         format_func=lambda x: _image_label(x.replace("_ela.png", ""), stems),
     )
-    if selected:
-        path = ela_dir / selected
-        original = _find_original(selected, "ela")
-        ref_img = original if original else path
+    if not selected:
+        return
 
-        st.caption("🖱️ 在下方原图上**拖拽画框**选择放大区域，还可**拖动已选框**，**双击**清除")
-        crop = _image_selector(ref_img, "ela")
+    path = ela_dir / selected
+    original = _find_original(selected, "ela")
+    ref_path = original if original else path
 
-        cols = st.columns(2 if original else 1)
-        col_idx = 0
-        if original:
-            with cols[0]:
-                st.caption("原始图片")
-                img = load_image_for_web(original)
-                st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-            col_idx = 1
-        with cols[col_idx]:
-            st.caption("ELA 热力图（红/黄 = 压缩误差异常）")
-            img = load_image_for_web(path)
-            st.image(_crop_image(img, *crop) if crop else img, use_container_width=True)
-            st.caption("高亮区域可能来自不同来源。JPEG 8×8 块边界和 PDF 文本也可能产生差异。")
-            with open(path, "rb") as f:
-                st.download_button("📥 下载热力图", f.read(), selected, key="dl_ela")
+    images: list[tuple[str, Path]] = []
+    if original:
+        images.append(("原始图片", original))
+    images.append(("ELA 热力图", path))
+
+    _render_zoom_iframe(ref_path, images, "ela", grid_cols=2)
+
+    st.caption("高亮区域可能来自不同来源。JPEG 8×8 块边界和 PDF 文本也可能产生差异。")
+    with open(path, "rb") as f:
+        st.download_button("📥 下载热力图", f.read(), selected, key="dl_ela")
 
 
 # ── Comparison Viewer (Human-in-the-Loop) ────────────────────────────────────

@@ -188,15 +188,7 @@ def check(
 
     TARGET can be a DOI (10.xxx/xxx) or path to a PDF file.
     """
-    # Auto-set output_dir for --web mode
     target_path = Path(target)
-    if web and not output_dir:
-        if target_path.exists() and target_path.suffix.lower() == ".pdf":
-            stem = target_path.stem
-        else:
-            stem = target.replace("/", "_").replace("\\", "_")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = Path(f"paperfraud_output/{stem}_{timestamp}")
 
     config = _build_config(
         grobid_url=grobid_url,
@@ -228,21 +220,29 @@ def check(
     paper = parse_pdf(pdf_path, config)
     if config.data_file:
         paper.data_file = config.data_file
-    if config.output_dir:
-        paper._output_dir = config.output_dir
-        # Copy original extracted images to output_dir/images/ for web viewer
-        if paper.image_paths:
-            images_dir = Path(config.output_dir) / "images"
-            images_dir.mkdir(parents=True, exist_ok=True)
-            for img_path in paper.image_paths:
-                if img_path.exists():
-                    dest = images_dir / img_path.name
-                    if not dest.exists():
-                        shutil.copy2(img_path, dest)
     console.print(
         f"[dim]提取文本 {len(paper.full_text)} 字符, "
         f"图片 {len(paper.image_paths)} 张[/dim]"
     )
+
+    # Auto-set output_dir from paper title (for --web or when not specified)
+    if not output_dir:
+        title = paper.title or pdf_path.stem
+        safe_name = _sanitize_filename(title)
+        output_dir = Path(f"output/{safe_name}")
+    # Update config + paper with final output_dir
+    config.output_dir = str(output_dir)
+    paper._output_dir = str(output_dir)
+
+    # Copy original extracted images to output_dir/images/ for web viewer
+    if paper.image_paths:
+        images_dir = Path(config.output_dir) / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        for img_path in paper.image_paths:
+            if img_path.exists():
+                dest = images_dir / img_path.name
+                if not dest.exists():
+                    shutil.copy2(img_path, dest)
 
     # Run checks
     console.print("[bold]正在执行检测...[/bold]")
@@ -345,6 +345,21 @@ def _extract_figure_captions(pdf_path: Path) -> dict[str, dict]:
     except Exception:
         pass
     return captions
+
+
+def _sanitize_filename(name: str, max_len: int = 80) -> str:
+    """Turn a paper title into a safe directory name. Keeps CJK characters."""
+    import re
+    # Remove chars invalid in filenames across platforms
+    name = re.sub(r'[\\/:*?"<>|]', "", name)
+    # Replace whitespace and hyphens with single underscore
+    name = re.sub(r"[\s\-]+", "_", name)
+    # Remove leading/trailing special chars
+    name = name.strip("._")
+    # Truncate
+    if len(name) > max_len:
+        name = name[:max_len].rstrip("_")
+    return name or "unknown_paper"
 
 
 def _launch_streamlit(report_path: Path | None = None, reports_dir: Path | None = None, port: int = 8501) -> None:
