@@ -1021,24 +1021,26 @@ def _comparison_viewer() -> None:
         st.info("未找到提取的图片。请使用 `--extract-images` 重新运行检测。")
         return
 
-    # Collect all images (png, jpg, jpeg)
+    # Collect all images
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp")
     all_images: list[Path] = []
-    for ext in ("*.png", "*.jpg", "*.jpeg"):
-        all_images.extend(sorted(images_dir.glob(ext), key=lambda p: _natural_key(p.name)))
+    for p in sorted(images_dir.iterdir(), key=lambda p: _natural_key(p.name)):
+        if p.is_file() and p.suffix.lower() in _IMG_EXTS:
+            all_images.append(p)
     stems = sorted({p.stem for p in all_images}, key=_natural_key)
 
     # ── Single-image mode: upload comparison image ─────────────────────────
     if len(stems) < 2:
-        st.info("当前仅有 1 张图片。上传第二张图片进行 Sync/Blink/Diff 比对。")
-
         if not stems:
-            st.warning("未找到任何图片。")
+            st.info("当前报告无图片。如需图像取证，请在落地页上传单张图片。")
             return
+
+        st.info("当前仅有 1 张图片。上传第二张图片进行 Sync/Blink/Diff 比对。")
 
         # Image A: the only available image
         stem_a = stems[0]
         img_a_path = next(
-            (images_dir / f"{stem_a}{ext}" for ext in (".png", ".jpg", ".jpeg")
+            (images_dir / f"{stem_a}{ext}" for ext in _IMG_EXTS
              if (images_dir / f"{stem_a}{ext}").exists()),
             None,
         )
@@ -1099,7 +1101,7 @@ def _comparison_viewer() -> None:
         # Resolve paths (handle different extensions)
         img_a_path = None
         img_b_path = None
-        for ext in (".png", ".jpg", ".jpeg"):
+        for ext in _IMG_EXTS:
             candidate = images_dir / f"{img_a_stem}{ext}"
             if candidate.exists() and img_a_path is None:
                 img_a_path = candidate
