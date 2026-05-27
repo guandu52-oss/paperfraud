@@ -205,15 +205,14 @@ def check(
 
     # Resolve target
     SUPPORTED_SUFFIXES = {".pdf", ".docx"}
-    if target_path.exists() and target_path.suffix.lower() in SUPPORTED_SUFFIXES:
-        file_path = target_path
-        doi = None
-    else:
-        # Assume it's a DOI — Phase 1: pass through as metadata
-        # Full DOI→PDF fetching will be implemented in fetcher/
-        console.print(f"[yellow]DOI 模式暂未实现（Phase 2）。请手动下载 PDF 后传入文件路径。[/yellow]")
-        console.print(f"[dim]DOI: {target}[/dim]")
+    if not target_path.exists():
+        console.print(f"[red]文件不存在: {target}[/red]")
         raise typer.Exit(1)
+    if target_path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        console.print(f"[red]不支持的格式: {target_path.suffix}（支持 {', '.join(sorted(SUPPORTED_SUFFIXES))}）[/red]")
+        raise typer.Exit(1)
+
+    file_path = target_path
 
     console.print(f"[bold]正在解析文件: {file_path.name}[/bold]")
 
