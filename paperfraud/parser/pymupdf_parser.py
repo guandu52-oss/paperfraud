@@ -68,13 +68,23 @@ class PyMuPDFParser:
                 full_text_parts.append(text)
 
                 if image_dir is not None:
-                    # 1. Collect embedded raster image rects (filter tiny < 50pt)
+                    # 1. Collect embedded raster image rects.
+                    #    Filter:
+                    #      - Tiny < 50pt (logos, icons, page decorations)
+                    #      - Wide+short strips with aspect > 5:1 and height < 150pt
+                    #        (chapter titles, decorative text rendered as bitmap)
                     img_rects = []
                     for img in page.get_images(full=True):
                         xref = img[0]
                         for r in page.get_image_rects(xref):
-                            if r.width >= 50 and r.height >= 50:
-                                img_rects.append(r)
+                            if r.width < 50 or r.height < 50:
+                                continue
+                            # Skip text-as-image strips (e.g. chapter headings
+                            # with special fonts rendered as bitmaps).  Real
+                            # figures are rarely wider than 5:1 at < 150pt tall.
+                            if r.width / max(r.height, 1) > 5 and r.height < 150:
+                                continue
+                            img_rects.append(r)
 
                     # 2. Collect vector art bounding box from filled drawings.
                     #    Many figures are pure vector (charts, diagrams) with no
