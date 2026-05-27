@@ -1,77 +1,53 @@
 """P-value linguistic camouflage detection.
 
 Scans Discussion/Results for phrases that disguise non-significant
-results as significant:
-
-  "trending towards significance"      — P > 0.05
-  "marginally significant"             — P > 0.05
-  "almost significant"                 — P > 0.05
-  "approached significance"            — P > 0.05
-  "borderline significant"             — P > 0.05
-  "trend towards significance"         — P > 0.05
-  "nominally significant"              — before correction
-
-In statistics, there is no "almost pregnant." If P > 0.05,
-results must be reported as non-significant.
+results as significant. Patterns are loaded from camouflage.yaml with
+Python hardcoded fallback.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from paperfraud.base import CheckResult, SourceLocation
 
 
+def _load_camouflage_patterns() -> list[tuple[str, str]]:
+    """Load camouflage patterns from YAML config, falling back to hardcoded defaults."""
+    _YAML_PATH = Path(__file__).resolve().parent / "camouflage.yaml"
+
+    try:
+        import yaml
+        if _YAML_PATH.exists():
+            data = yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8"))
+            patterns = data.get("patterns", [])
+            return [(p["regex"], p["explanation"]) for p in patterns]
+    except Exception:
+        pass
+
+    return [
+        (r'(?:trending|tend(?:ed|ing)?)\s+towards?\s+(?:statistical\s+)?significance',
+         "trending towards significance — P > 0.05，暗示接近显著但实际不显著"),
+        (r'marginally\s+significant',
+         "marginally significant — 经典 P 值伪装话术，P 值通常在 0.05-0.10 之间"),
+        (r'almost\s+(?:reached\s+)?(?:statistical\s+)?significance',
+         "almost significant — 没有'差点显著'，只有显著或不显著"),
+        (r'approached?\s+(?:statistical\s+)?significance',
+         "approached significance — P > 0.05 强行暗示有趋势"),
+        (r'borderline\s+significant',
+         "borderline significant — 临界/边界显著，暗示 P 接近 0.05"),
+        (r'(?:a\s+)?trend\s+(?:towards?\s+)?(?:statistical\s+)?significance',
+         "trend towards significance — 趋势≠显著"),
+        (r'nominally\s+significant',
+         "nominally significant — 名义显著，暗示未经多重比较校正"),
+    ]
+
+
+_RAW_PATTERNS = _load_camouflage_patterns()
 CAMOUFLAGE_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (
-        re.compile(
-            r'(?:trending|tend(?:ed|ing)?)\s+towards?\s+(?:statistical\s+)?significance',
-            re.IGNORECASE,
-        ),
-        "trending towards significance — P > 0.05，暗示接近显著但实际不显著",
-    ),
-    (
-        re.compile(
-            r'marginally\s+significant',
-            re.IGNORECASE,
-        ),
-        "marginally significant — 经典 P 值伪装话术，P 值通常在 0.05-0.10 之间",
-    ),
-    (
-        re.compile(
-            r'almost\s+(?:reached\s+)?(?:statistical\s+)?significance',
-            re.IGNORECASE,
-        ),
-        "almost significant — 没有'差点显著'，只有显著或不显著",
-    ),
-    (
-        re.compile(
-            r'approached?\s+(?:statistical\s+)?significance',
-            re.IGNORECASE,
-        ),
-        "approached significance — P > 0.05 强行暗示有趋势",
-    ),
-    (
-        re.compile(
-            r'borderline\s+significant',
-            re.IGNORECASE,
-        ),
-        "borderline significant — 临界/边界显著，暗示 P 接近 0.05",
-    ),
-    (
-        re.compile(
-            r'(?:a\s+)?trend\s+(?:towards?\s+)?(?:statistical\s+)?significance',
-            re.IGNORECASE,
-        ),
-        "trend towards significance — 趋势≠显著",
-    ),
-    (
-        re.compile(
-            r'nominally\s+significant',
-            re.IGNORECASE,
-        ),
-        "nominally significant — 名义显著，暗示未经多重比较校正",
-    ),
+    (re.compile(regex, re.IGNORECASE), explanation)
+    for regex, explanation in _RAW_PATTERNS
 ]
 
 

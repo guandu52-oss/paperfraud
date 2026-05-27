@@ -1,0 +1,38 @@
+# Blacklist words for overclaim and hype detection
+# Edit this file to add/remove words. Changes take effect immediately,
+# no Python code changes needed.
+#
+# Categories:
+#   absolute  — 绝对化表述（definitive/irrefutable claims）
+#   overclaim — 过度宣称（novel, first, breakthrough）
+#   inflated  — 夸大修饰（remarkable, excellent hyperbole）
+
+absolute:
+  - definitively
+  - unequivocally
+  - undoubtedly
+  - absolutely
+  - certainly
+  - incontrovertibly
+  - irrefutably
+
+overclaim:
+  - novel
+  - first.?time
+  - first.?report
+  - first.?evidence
+  - breakthrough
+  - revolutionary
+  - game.?changing
+  - paradigm.?shift
+  - unprecedented
+
+inflated:
+  - remarkable
+  - excellent
+  - outstanding
+  - extraordinary
+  - tremendous
+  - exceptional
+  - superb
+  - fantastic

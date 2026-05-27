@@ -19,6 +19,7 @@ dependencies = [
     "opencv-python-headless>=4.8.0",
     "Jinja2>=3.1.0",
     "httpx>=0.25.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,30 @@ dev = [
 web = [
     "streamlit>=1.28.0",
 ]
+docx = [
+    "python-docx>=1.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/guandu52-oss/paperfraud"
+Documentation = "https://github.com/guandu52-oss/paperfraud#readme"
+Repository = "https://github.com/guandu52-oss/paperfraud"
+Issues = "https://github.com/guandu52-oss/paperfraud/issues"
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Operating System :: MacOS",
+]
+keywords = ["fraud-detection", "academic-integrity", "statistics", "forensics", "life-sciences"]
 
 [project.scripts]
 paperfraud = "paperfraud.cli:app"

@@ -320,28 +320,24 @@ def _natural_key(name: str) -> tuple[int, str]:
 def _image_label(name: str, stems: list[str] | None = None) -> str:
     """Label for page-based figure names.
 
-    'page2_1' (sole)  → '第 2 页 — caption'
+    'page4_1' with Figure 1  → '第 4 页（Figure 1）'
+    'page5_1' without caption → '第 5 页'
     'page5_1', 'page5_2' (multiple) → '第 5 页 · 图 1', '第 5 页 · 图 2'
     """
     m = re.match(r"page(\d+)(?:_(\d+))?$", name)
     if m:
         page = m.group(1)
         idx = m.group(2)
-        # Determine if this page has multiple figure clusters
         multi = False
         if stems:
             prefix = f"page{page}_"
             multi = sum(1 for s in stems if s.startswith(prefix)) > 1
-        # Caption hint from CLI figure_captions
         fig_info = figure_captions.get(page, {})
-        caption_hint = ""
-        if fig_info:
-            caption = fig_info.get("caption", "")
-            short = caption[:80] + "…" if len(caption) > 80 else caption
-            caption_hint = f" — {short}"
+        fig_num = fig_info.get("figure", "")
+        fig_suffix = f"（Figure {fig_num}）" if fig_num else ""
         if multi and idx:
-            return f"第 {page} 页 · 图 {idx}{caption_hint}"
-        return f"第 {page} 页{caption_hint}"
+            return f"第 {page} 页 · 图 {idx}{fig_suffix}"
+        return f"第 {page} 页{fig_suffix}"
     return name
 
 

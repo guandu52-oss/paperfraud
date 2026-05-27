@@ -1,40 +1,56 @@
 """Blacklist word scanning for overclaim and hype detection.
 
-Flags inflated language common in fabricated or paper-mill papers:
-  - "novel", "first time", "first report"
-  - "remarkable", "excellent", "outstanding"
-  - "breakthrough", "revolutionary", "game-changing"
-  - Absolute terms: "definitively", "unequivocally", "undoubtedly"
+Flags inflated language common in fabricated or paper-mill papers.
+Word lists are loaded from blacklist.yaml with Python hardcoded fallback.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from paperfraud.base import CheckResult, SourceLocation
 
 
-# Categorized blacklist
-ABSOLUTE_TERMS = [
-    "definitively", "unequivocally", "undoubtedly", "absolutely",
-    "certainly", "incontrovertibly", "irrefutably",
-]
+def _load_blacklist_terms() -> dict[str, list[str]]:
+    """Load blacklist terms from YAML config, falling back to hardcoded defaults."""
+    _YAML_PATH = Path(__file__).resolve().parent / "blacklist.yaml"
 
-OVERCLAIM_TERMS = [
-    "novel", "first.?time", "first.?report", "first.?evidence",
-    "breakthrough", "revolutionary", "game.?changing",
-    "paradigm.?shift", "unprecedented",
-]
+    try:
+        import yaml
+        if _YAML_PATH.exists():
+            data = yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8"))
+            return {
+                "absolute": data.get("absolute", []),
+                "overclaim": data.get("overclaim", []),
+                "inflated": data.get("inflated", []),
+            }
+    except Exception:
+        pass
 
-INFLATED_TERMS = [
-    "remarkable", "excellent", "outstanding", "extraordinary",
-    "tremendous", "exceptional", "superb", "fantastic",
-]
+    return {
+        "absolute": [
+            "definitively", "unequivocally", "undoubtedly", "absolutely",
+            "certainly", "incontrovertibly", "irrefutably",
+        ],
+        "overclaim": [
+            "novel", "first.?time", "first.?report", "first.?evidence",
+            "breakthrough", "revolutionary", "game.?changing",
+            "paradigm.?shift", "unprecedented",
+        ],
+        "inflated": [
+            "remarkable", "excellent", "outstanding", "extraordinary",
+            "tremendous", "exceptional", "superb", "fantastic",
+        ],
+    }
 
-# Combined patterns for efficient scanning
+
+_TERMS = _load_blacklist_terms()
+ABSOLUTE_TERMS = _TERMS["absolute"]
+OVERCLAIM_TERMS = _TERMS["overclaim"]
+INFLATED_TERMS = _TERMS["inflated"]
 ALL_BLACKLIST = ABSOLUTE_TERMS + OVERCLAIM_TERMS + INFLATED_TERMS
 
-# Compile patterns
 BLACKLIST_RES = [
     (re.compile(r'\b' + term + r'\b', re.IGNORECASE), term, category)
     for term, category in (

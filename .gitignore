@@ -32,3 +32,10 @@ paperfraud_output/
 *.swo
 *~
 .env
+
+# Papers directory (keep structure, ignore content)
+papers/*.pdf
+papers/*.docx
+papers/*.DOCX
+!papers/.gitkeep
+!papers/README.md

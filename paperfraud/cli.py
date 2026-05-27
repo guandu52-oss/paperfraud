@@ -26,7 +26,7 @@ from rich.table import Table
 
 from paperfraud.base import CheckResult
 from paperfraud.config import Config
-from paperfraud.parser.engine import parse_pdf
+from paperfraud.parser.engine import parse_paper
 from paperfraud.report.aggregator import aggregate_results
 
 # ── Load .env (no extra dependencies) ────────────────────────────────────────
@@ -204,8 +204,9 @@ def check(
     )
 
     # Resolve target
-    if target_path.exists() and target_path.suffix.lower() == ".pdf":
-        pdf_path = target_path
+    SUPPORTED_SUFFIXES = {".pdf", ".docx"}
+    if target_path.exists() and target_path.suffix.lower() in SUPPORTED_SUFFIXES:
+        file_path = target_path
         doi = None
     else:
         # Assume it's a DOI — Phase 1: pass through as metadata
@@ -214,12 +215,29 @@ def check(
         console.print(f"[dim]DOI: {target}[/dim]")
         raise typer.Exit(1)
 
-    console.print(f"[bold]正在解析 PDF: {pdf_path.name}[/bold]")
+    console.print(f"[bold]正在解析文件: {file_path.name}[/bold]")
 
     # Parse
-    paper = parse_pdf(pdf_path, config)
+    paper = parse_paper(file_path, config)
     if config.data_file:
         paper.data_file = config.data_file
+    else:
+        # Auto-detect supplementary data in same directory
+        parent = file_path.parent
+        stem = file_path.stem
+        for ext in (".csv", ".tsv", ".txt"):
+            candidate = parent / f"{stem}{ext}"
+            if candidate.exists():
+                paper.data_file = str(candidate)
+                config.data_file = str(candidate)
+                console.print(f"[dim]自动关联数据: {candidate.name}[/dim]")
+                break
+        else:
+            csv_files = list(parent.glob("*.csv")) + list(parent.glob("*.tsv"))
+            if csv_files:
+                paper.data_file = str(csv_files[0])
+                config.data_file = str(csv_files[0])
+                console.print(f"[dim]自动关联数据: {csv_files[0].name}[/dim]")
     console.print(
         f"[dim]提取文本 {len(paper.full_text)} 字符, "
         f"图片 {len(paper.image_paths)} 张[/dim]"
@@ -227,7 +245,7 @@ def check(
 
     # Auto-set output_dir from paper title (for --web or when not specified)
     if not output_dir:
-        title = paper.title or pdf_path.stem
+        title = paper.title or file_path.stem
         safe_name = _sanitize_filename(title)
         output_dir = Path(f"output/{safe_name}")
     # Update config + paper with final output_dir
@@ -271,7 +289,7 @@ def check(
     # Extract figure captions from PDF (for web UI labels)
     figure_captions: dict[str, dict] = {}
     if config.output_dir:
-        figure_captions = _extract_figure_captions(pdf_path)
+        figure_captions = _extract_figure_captions(file_path)
 
     # Save JSON report to output_dir if persistent
     if config.output_dir:
@@ -303,7 +321,7 @@ def check(
         else:
             console.print(out)
     elif output == "markdown":
-        title = paper.title or pdf_path.stem
+        title = paper.title or file_path.stem
         out = format_markdown(aggregated, results, title)
         if output_file:
             output_file.write_text(out, encoding="utf-8")
@@ -664,7 +682,6 @@ def review(
 
 
 @app.command()
-@app.command()
 def serve(
     directory: Path = typer.Argument(..., help="Directory containing report.json files (e.g. output/)"),
     port: int = typer.Option(8501, "--port", "-p", help="Streamlit server port"),
@@ -693,6 +710,46 @@ def serve(
         console.print(f"  [dim]- {r}[/dim]")
 
     _launch_streamlit(reports_dir=directory, port=port)
+
+
+@app.command()
+def extract_images(
+    target: str = typer.Argument(..., help="PDF or DOCX file path"),
+    output_dir: Path = typer.Option(..., "--output-dir", "-o", help="Output directory for extracted images"),
+    max_pages: int = typer.Option(0, "--max-pages", help="Max pages to parse (0=all)"),
+):
+    """Extract embedded images and figure regions from a PDF or DOCX without running fraud checks."""
+    target_path = Path(target)
+    SUPPORTED_SUFFIXES = {".pdf", ".docx"}
+    if not target_path.exists() or target_path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        console.print(f"[red]无效的文件: {target}（支持 .pdf 和 .docx）[/red]")
+        raise typer.Exit(1)
+
+    config = Config(
+        skip_images=False,
+        max_pages=max_pages,
+    )
+
+    console.print(f"[bold]正在提取图片: {target_path.name}[/bold]")
+    paper = parse_paper(target_path, config)
+
+    if not paper.image_paths:
+        console.print("[yellow]未提取到任何图片。[/yellow]")
+        raise typer.Exit(0)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for img_path in paper.image_paths:
+        if img_path.exists():
+            dest = output_dir / img_path.name
+            shutil.copy2(img_path, dest)
+            copied += 1
+
+    page_count = len({p.stem.rsplit("_", 1)[0] for p in paper.image_paths})
+    console.print(f"[green]提取完成：{copied} 张图片（{page_count} 页） → {output_dir}[/green]")
+
+    if paper._tmp_dir:
+        shutil.rmtree(paper._tmp_dir, ignore_errors=True)
 
 
 def main():

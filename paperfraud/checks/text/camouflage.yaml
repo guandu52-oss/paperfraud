@@ -1,0 +1,27 @@
+# P-value linguistic camouflage patterns
+# Edit this file to add/remove patterns. Changes take effect immediately.
+# Each pattern has:
+#   regex      — case-insensitive regex pattern
+#   explanation — Chinese explanation of why this is a camouflage phrase
+
+patterns:
+  - regex: '(?:trending|tend(?:ed|ing)?)\s+towards?\s+(?:statistical\s+)?significance'
+    explanation: "trending towards significance — P > 0.05，暗示接近显著但实际不显著"
+
+  - regex: 'marginally\s+significant'
+    explanation: "marginally significant — 经典 P 值伪装话术，P 值通常在 0.05-0.10 之间"
+
+  - regex: 'almost\s+(?:reached\s+)?(?:statistical\s+)?significance'
+    explanation: "almost significant — 没有'差点显著'，只有显著或不显著"
+
+  - regex: 'approached?\s+(?:statistical\s+)?significance'
+    explanation: "approached significance — P > 0.05 强行暗示有趋势"
+
+  - regex: 'borderline\s+significant'
+    explanation: "borderline significant — 临界/边界显著，暗示 P 接近 0.05"
+
+  - regex: '(?:a\s+)?trend\s+(?:towards?\s+)?(?:statistical\s+)?significance'
+    explanation: "trend towards significance — 趋势≠显著"
+
+  - regex: 'nominally\s+significant'
+    explanation: "nominally significant — 名义显著，暗示未经多重比较校正"
