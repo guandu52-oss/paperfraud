@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --accent: #0f3460;
+    --text: #e0e0e0;
+    --text-dim: #999;
+    --active: #e94560;
+    --tab-bg: #0d1b2a;
+    --border: #2a2a4a;
+    --slider-track: #333;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    overflow-y: auto; padding: 8px;
+  }
+  /* ── Tabs ────────────────────────────────────────────── */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 8px;
+    background: var(--tab-bg); border-radius: 8px; padding: 3px;
+  }
+  .tab {
+    flex: 1; text-align: center; padding: 8px 4px; cursor: pointer;
+    border-radius: 6px; font-size: 12px; font-weight: 600;
+    color: var(--text-dim); transition: all 0.15s;
+    user-select: none; border: 1px solid transparent;
+  }
+  .tab:hover { color: var(--text); background: var(--accent); }
+  .tab.active { color: #fff; background: var(--active); }
+  /* ── Canvases ────────────────────────────────────────── */
+  .canvas-wrap {
+    display: flex; gap: 6px; margin-bottom: 8px;
+    min-height: 280px; align-items: flex-start;
+  }
+  .canvas-wrap.single { justify-content: center; }
+  .canvas-pane {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+  }
+  .canvas-pane canvas {
+    display: block; max-width: 100%; height: auto;
+    border: 1px solid var(--border); border-radius: 6px;
+    cursor: crosshair; background: #000;
+  }
+  .canvas-label {
+    font-size: 11px; color: var(--text-dim); margin-top: 3px;
+    letter-spacing: 0.5px;
+  }
+  /* ── Controls ────────────────────────────────────────── */
+  .controls {
+    background: var(--panel); border-radius: 8px;
+    padding: 10px 12px; display: flex; flex-wrap: wrap;
+    gap: 12px; align-items: center;
+  }
+  .control-group { display: flex; align-items: center; gap: 6px; }
+  .control-group label {
+    font-size: 11px; color: var(--text-dim); min-width: 48px;
+  }
+  .control-group input[type="range"] {
+    width: 100px; accent-color: var(--active);
+  }
+  .control-group .val {
+    font-size: 11px; color: var(--text); min-width: 32px; text-align: right;
+  }
+  button {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 4px; padding: 6px 14px; cursor: pointer;
+    font-size: 12px; font-weight: 600; white-space: nowrap;
+  }
+  button:hover { opacity: 0.85; }
+  button.active-btn { background: var(--active); }
+  /* ── LUT buttons ─────────────────────────────────────── */
+  .lut-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+  .lut-btn {
+    background: var(--tab-bg); color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 10px; cursor: pointer; font-size: 11px;
+    transition: all 0.15s;
+  }
+  .lut-btn:hover { border-color: var(--active); color: var(--text); }
+  .lut-btn.active-lut { background: var(--active); color: #fff; border-color: var(--active); }
+  /* ── Hint ────────────────────────────────────────────── */
+  .hint { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+  /* ── Tool explanation ────────────────────────────────── */
+  .tool-explain {
+    font-size: 11px; color: var(--text-dim); line-height: 1.6;
+    margin-top: 6px; padding: 6px 10px;
+    background: rgba(255,255,255,0.04); border-radius: 4px;
+    border-left: 2px solid var(--active); width: 100%;
+  }
+  .tool-explain strong { color: var(--text); }
+</style>
+</head>
+<body>
+
+<!-- ── Status bar (debug) ───────────────────────────────── -->
+<div id="statusBar" style="background:#0f3460;color:#fff;padding:4px 10px;border-radius:4px;
+     font-size:11px;margin-bottom:6px;font-family:monospace;display:none;">
+  等待数据...
+</div>
+
+<!-- ── Tabs ────────────────────────────────────────────── -->
+<div class="tabs">
+  <div class="tab active" data-tool="sync">🔍 同步放大镜</div>
+  <div class="tab" data-tool="blink">💡 闪烁对比</div>
+  <div class="tab" data-tool="diff">📐 差异混合</div>
+  <div class="tab" data-tool="lut">🎨 伪彩映射</div>
+</div>
+
+<!-- ── Canvas area ─────────────────────────────────────── -->
+<div class="canvas-wrap" id="canvasWrap">
+  <div class="canvas-pane">
+    <canvas id="cA"></canvas>
+    <div class="canvas-label">Image A</div>
+  </div>
+  <div class="canvas-pane" id="paneB">
+    <canvas id="cB"></canvas>
+    <div class="canvas-label">Image B</div>
+  </div>
+</div>
+<div class="canvas-wrap single" id="blinkWrap" style="display:none">
+  <div class="canvas-pane">
+    <canvas id="cBlink"></canvas>
+    <div class="canvas-label" id="blinkLabel">Image A</div>
+  </div>
+</div>
+
+<!-- ── Sync Controls ───────────────────────────────────── -->
+<div class="controls" id="ctrlSync">
+  <button id="btnLink" class="active-btn" style="min-width:80px;">🔗 联动</button>
+  <div class="control-group">
+    <label>A 缩放</label>
+    <input type="range" id="zoomSliderA" min="100" max="2000" value="100" step="10">
+    <span class="val" id="zoomValA">100%</span>
+  </div>
+  <div class="control-group" id="grpZoomB" style="display:none">
+    <label>B 缩放</label>
+    <input type="range" id="zoomSliderB" min="100" max="2000" value="100" step="10">
+    <span class="val" id="zoomValB">100%</span>
+  </div>
+  <button id="btnReset">↺ 还原 100%</button>
+  <span class="hint" id="hintSync">联动模式：滚轮/拖拽同时作用于两图</span>
+</div>
+
+<!-- ── Blink Controls ──────────────────────────────────── -->
+<div class="controls" id="ctrlBlink" style="display:none">
+  <button id="btnBlink" class="active-btn">▶ 开始闪烁</button>
+  <div class="control-group">
+    <label>速度</label>
+    <input type="range" id="blinkSpeed" min="100" max="2000" value="500" step="50">
+    <span class="val" id="blinkVal">500ms</span>
+  </div>
+  <span class="hint">两张图原位交替闪烁 — 拼接边缘最易察觉</span>
+</div>
+
+<!-- ── Diff Controls ───────────────────────────────────── -->
+<div class="controls" id="ctrlDiff" style="display:none">
+  <div class="control-group">
+    <label>放大</label>
+    <input type="range" id="diffAmp" min="1" max="30" value="5" step="0.5">
+    <span class="val" id="diffAmpVal">5x</span>
+  </div>
+  <div class="control-group">
+    <label>阈值</label>
+    <input type="range" id="diffThresh" min="0" max="80" value="10" step="1">
+    <span class="val" id="diffThreshVal">10</span>
+  </div>
+  <button id="btnDiffReset">↺ 重置</button>
+  <span class="hint">像素级减法 · 差异热力图</span>
+</div>
+
+<!-- ── LUT Controls ────────────────────────────────────── -->
+<div class="controls" id="ctrlLut" style="display:none">
+  <div class="lut-btns">
+    <button class="lut-btn active-lut" data-lut="none">原始</button>
+    <button class="lut-btn" data-lut="fire">Fire</button>
+    <button class="lut-btn" data-lut="jet">Jet</button>
+    <button class="lut-btn" data-lut="viridis">Viridis</button>
+    <button class="lut-btn" data-lut="inferno">Inferno</button>
+    <button class="lut-btn" data-lut="hot">Hot</button>
+  </div>
+  <span class="hint">伪彩色放大灰度断层</span>
+</div>
+
+<!-- ── Tool explanations (toggled with tabs) ────────────── -->
+<div class="tool-explain" id="explainSync">
+  <strong>怎么用？</strong>选择两张图片，滚轮缩放（最高 20×），拖拽平移。点击<strong>🔓 独立</strong>可分别缩放每张图——适合比对不同页面的图片时各自放大关键区域。
+</div>
+<div class="tool-explain" id="explainBlink" style="display:none">
+  <strong>怎么用？</strong>两图在同位置快速交替闪烁——人眼对变化极其敏感，拼接边缘、复制粘贴痕迹在闪烁中会"跳动"出来。调节<strong>速度</strong>找到最舒适的闪烁频率。
+</div>
+<div class="tool-explain" id="explainDiff" style="display:none">
+  <strong>怎么用？</strong>两图逐像素做减法——<span style="color:#4fc3f7;">蓝色</span>=几乎一样，<span style="color:#ff5252;">红色/黄色</span>=差异大。<br>
+  用来比对<strong>论文截图 vs 原始数据重新绘图</strong>。差异区域若恰好落在 WB 条带、流式图、显微镜照片关键位置，就是造假证据。<br>
+  <strong>放大</strong>调敏感度（越大越敏感），<strong>阈值</strong>过滤 JPEG 压缩噪声（低于阈值的差异不显示）。
+</div>
+<div class="tool-explain" id="explainLut" style="display:none">
+  <strong>怎么用？</strong>人眼只能分辨约 30 级灰度，但能分辨数千种颜色。把灰度图映射到伪彩色，等于把细微灰度断层"翻译"成肉眼可见的颜色跳变。<br>
+  拼接/修图区域在伪彩色下会出现<strong>不自然的矩形色块边界</strong>——就像贴了一层邮票。<br>
+  <strong>怎么选色系？</strong><br>
+  <strong>Fire</strong> — 查<strong>WB 条带复制</strong>：若两条本该不同的条带纹理颜色完全一致，就是 copy-paste ·
+  <strong>Jet</strong> — 查<strong>显微镜/流式图拼接</strong>：不同来源拼在一起的区域会出现彩虹断层 ·
+  <strong>Viridis</strong> — <strong>初步筛查</strong>：颜色过渡自然，不会因色系本身产生假边界，确认可疑后再换 Fire 细看 ·
+  <strong>Inferno</strong> — 查<strong>暗区 WB 条带、凝胶电泳图</strong>：暗部细节好，弱条带 duplication 无处遁形 ·
+  <strong>Hot</strong> — 查<strong>热图/统计图的涂抹痕迹</strong>：黑白渐变区域被人为修改后出现不连续色块。
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// Streamlit component protocol (minimal, zero external deps)
+// ═══════════════════════════════════════════════════════════
+function setFrameHeight(h) {
+  window.parent.postMessage({ type: 'streamlit:setFrameHeight', height: h }, '*');
+}
+
+// ═══════════════════════════════════════════════════════════
+// LUT presets (256-entry RGB lookup tables)
+// ═══════════════════════════════════════════════════════════
+function buildFireLUT() {
+  const lut = [];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    lut.push([
+      Math.min(255, Math.floor(t * 3 * 255)),
+      Math.min(255, Math.floor(Math.max(0, (t - 0.25) * 4 * 255))),
+      Math.min(255, Math.floor(Math.max(0, (t - 0.6) * 4 * 255))),
+    ]);
+  }
+  return lut;
+}
+
+function buildJetLUT() {
+  const lut = [];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    let r, g, b;
+    if (t < 0.125) { r = 0; g = 0; b = Math.floor(127.5 + t * 1020); }
+    else if (t < 0.375) { r = 0; g = Math.floor((t - 0.125) * 1020); b = 255; }
+    else if (t < 0.625) { r = Math.floor((t - 0.375) * 1020); g = 255; b = Math.floor(255 - (t - 0.375) * 1020); }
+    else if (t < 0.875) { r = 255; g = Math.floor(255 - (t - 0.625) * 1020); b = 0; }
+    else { r = Math.floor(255 - (t - 0.875) * 1020); g = 0; b = 0; }
+    lut.push([Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))]);
+  }
+  return lut;
+}
+
+function buildViridisLUT() {
+  // Simplified viridis: purple→blue→green→yellow
+  const lut = [];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    const r = Math.floor(Math.max(0, Math.min(255, (0.267*t + 0.5*t*t - 0.2*t*t*t) * 255 + 68)));
+    const g = Math.floor(Math.max(0, Math.min(255, (0.8*t + 0.2*t*t) * 255 + 1)));
+    const b = Math.floor(Math.max(0, Math.min(255, (1.0 - t*0.7 - t*t*0.3) * 255 + 84)));
+    lut.push([r, g, b]);
+  }
+  return lut;
+}
+
+function buildInfernoLUT() {
+  const lut = [];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    lut.push([
+      Math.min(255, Math.floor(t * 6 * 255)),
+      Math.min(255, Math.floor(Math.max(0, (t - 0.15) * 3.5) * 255)),
+      Math.min(255, Math.floor(Math.max(0, (t - 0.5) * 4) * 255)),
+    ]);
+  }
+  return lut;
+}
+
+function buildHotLUT() {
+  const lut = [];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    lut.push([
+      Math.min(255, Math.floor(t * 3 * 255)),
+      Math.min(255, Math.floor(Math.max(0, (t - 0.33) * 3) * 255)),
+      Math.min(255, Math.floor(Math.max(0, (t - 0.66) * 3) * 255)),
+    ]);
+  }
+  return lut;
+}
+
+const LUT_PRESETS = {
+  fire: buildFireLUT(),
+  jet: buildJetLUT(),
+  viridis: buildViridisLUT(),
+  inferno: buildInfernoLUT(),
+  hot: buildHotLUT(),
+};
+
+// ═══════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════
+const cA = document.getElementById('cA');
+const cB = document.getElementById('cB');
+const cBlink = document.getElementById('cBlink');
+const ctxA = cA.getContext('2d');
+const ctxB = cB.getContext('2d');
+const ctxBlink = cBlink.getContext('2d');
+	ctxA.imageSmoothingEnabled = true;
+	ctxB.imageSmoothingEnabled = true;
+	ctxBlink.imageSmoothingEnabled = true;
+
+let imgA = null, imgB = null;
+let currentTool = 'sync';
+let activeLut = 'none';           // shared LUT selection
+
+// Sync state
+let linked = true;               // two canvases zoom/pan together
+let zoomA = 1.0, panXA = 0, panYA = 0;
+let zoomB = 1.0, panXB = 0, panYB = 0;
+let dragging = false;
+let dragStartX = 0, dragStartY = 0;
+let dragStartPanX = 0, dragStartPanY = 0;
+let activeCanvas = 'A';          // which canvas slider controls when unlinked
+
+// Blink state
+let blinkActive = false;
+let blinkTimer = null;
+let showImageA = true;
+let blinkSpeed = 500;
+
+// Canvas sizing (set after image load)
+let displayW = 0, displayH = 0;
+const MAX_CANVAS_W = 1500;
+const MAX_CANVAS_H = 1200;
+
+// ═══════════════════════════════════════════════════════════
+// Canvas sizing helper
+// ═══════════════════════════════════════════════════════════
+function fitSize(img) {
+  const ratio = img.width / img.height;
+  let w = Math.min(MAX_CANVAS_W, img.width);
+  let h = w / ratio;
+  if (h > MAX_CANVAS_H) { h = MAX_CANVAS_H; w = h * ratio; }
+  return [Math.floor(w), Math.floor(h)];
+}
+
+function resizeCanvases(imgA_, imgB_) {
+  const [wa, ha] = fitSize(imgA_);
+  const [wb, hb] = fitSize(imgB_);
+  // Use the same size for both in blink/diff mode; max of each in sync mode
+  if (currentTool === 'sync') {
+    displayW = Math.max(wa, wb); displayH = Math.max(ha, hb);
+  } else {
+    displayW = Math.max(wa, wb); displayH = Math.max(ha, hb);
+  }
+  cA.width = displayW; cA.height = displayH;
+  cB.width = displayW; cB.height = displayH;
+  cBlink.width = displayW; cBlink.height = displayH;
+}
+
+// ═══════════════════════════════════════════════════════════
+// LUT application (in-place on ImageData)
+// ═══════════════════════════════════════════════════════════
+function applyLUTToImageData(imageData, lutName) {
+  if (lutName === 'none') return;
+  const lut = LUT_PRESETS[lutName];
+  if (!lut) return;
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const g = d[i]; // grayscale: R=G=B so pick R
+    const [r, gr, b] = lut[g];
+    d[i] = r; d[i + 1] = gr; d[i + 2] = b;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render: Sync mode (side-by-side, shared zoom/pan)
+// ═══════════════════════════════════════════════════════════
+function renderSync() {
+  if (!imgA || !imgB) return;
+  resizeCanvases(imgA, imgB);
+
+  const zooms = [zoomA, zoomB];
+  const panXs = [panXA, panXB];
+  const panYs = [panYA, panYB];
+
+  [cA, cB].forEach((c, idx) => {
+    const img = idx === 0 ? imgA : imgB;
+    const ctx = c.getContext('2d');
+    const z = zooms[idx], px = panXs[idx], py = panYs[idx];
+    ctx.imageSmoothingEnabled = (z <= 1.0);
+    ctx.clearRect(0, 0, c.width, c.height);
+
+    const srcW = img.width / z;
+    const srcH = img.height / z;
+    const srcX = px * Math.max(0, img.width - srcW);
+    const srcY = py * Math.max(0, img.height - srcH);
+
+    ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, c.width, c.height);
+
+    if (activeLut !== 'none') {
+      const imageData = ctx.getImageData(0, 0, c.width, c.height);
+      applyLUTToImageData(imageData, activeLut);
+      ctx.putImageData(imageData, 0, 0);
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render: Blink mode (single canvas, alternating)
+// ═══════════════════════════════════════════════════════════
+function renderBlinkFrame() {
+  if (!imgA || !imgB) return;
+  const img = showImageA ? imgA : imgB;
+  ctxBlink.imageSmoothingEnabled = true;
+  ctxBlink.clearRect(0, 0, cBlink.width, cBlink.height);
+  // Scale image to fit canvas, preserving aspect ratio
+  const iw = img.width, ih = img.height;
+  const cw = cBlink.width, ch = cBlink.height;
+  const scale = Math.min(cw / iw, ch / ih);
+  const dw = iw * scale, dh = ih * scale;
+  const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
+  ctxBlink.drawImage(img, dx, dy, dw, dh);
+
+  if (activeLut !== 'none') {
+    const imageData = ctxBlink.getImageData(0, 0, cBlink.width, cBlink.height);
+    applyLUTToImageData(imageData, activeLut);
+    ctxBlink.putImageData(imageData, 0, 0);
+  }
+
+  document.getElementById('blinkLabel').textContent = showImageA ? 'Image A' : 'Image B';
+}
+
+function startBlink() {
+  if (blinkActive) return;
+  blinkActive = true;
+  showImageA = true;
+  resizeCanvases(imgA, imgB);
+  document.getElementById('canvasWrap').style.display = 'none';
+  document.getElementById('blinkWrap').style.display = 'flex';
+  renderBlinkFrame();
+  blinkTimer = setInterval(() => {
+    showImageA = !showImageA;
+    renderBlinkFrame();
+  }, blinkSpeed);
+  document.getElementById('btnBlink').textContent = '⏸ 暂停闪烁';
+  // Sync slider with current speed
+  document.getElementById('blinkSpeed').value = blinkSpeed;
+  document.getElementById('blinkVal').textContent = blinkSpeed + 'ms';
+}
+
+function stopBlink() {
+  blinkActive = false;
+  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+  document.getElementById('btnBlink').textContent = '▶ 开始闪烁';
+  document.getElementById('canvasWrap').style.display = 'flex';
+  document.getElementById('blinkWrap').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render: Diff mode (pixel subtraction)
+// ═══════════════════════════════════════════════════════════
+function renderDiff() {
+  if (!imgA || !imgB) return;
+  resizeCanvases(imgA, imgB);
+
+  const amp = parseFloat(document.getElementById('diffAmp').value);
+  const thresh = parseInt(document.getElementById('diffThresh').value);
+
+  // Draw both images scaled to same canvas size
+  ctxA.imageSmoothingEnabled = true; ctxB.imageSmoothingEnabled = true;
+  ctxA.clearRect(0, 0, cA.width, cA.height);
+  ctxB.clearRect(0, 0, cB.width, cB.height);
+  ctxA.drawImage(imgA, 0, 0, cA.width, cA.height);
+  ctxB.drawImage(imgB, 0, 0, cB.width, cB.height);
+
+  if (activeLut !== 'none') {
+    const da = ctxA.getImageData(0, 0, cA.width, cA.height);
+    applyLUTToImageData(da, activeLut);
+    ctxA.putImageData(da, 0, 0);
+    const db = ctxB.getImageData(0, 0, cB.width, cB.height);
+    applyLUTToImageData(db, activeLut);
+    ctxB.putImageData(db, 0, 0);
+  }
+
+  // Draw diff on B canvas (replace)
+  const dataA = ctxA.getImageData(0, 0, cA.width, cA.height).data;
+  const dataB = ctxB.getImageData(0, 0, cB.width, cB.height).data;
+  const diff = ctxB.createImageData(cB.width, cB.height);
+
+  for (let i = 0; i < dataA.length; i += 4) {
+    const gA = dataA[i];
+    const gB = dataB[i];
+    let d = Math.abs(gA - gB) * amp;
+    if (d < thresh) d = 0;
+    d = Math.min(255, d);
+    // Hot-cold colormap: cold (blue) = small diff, hot (red/yellow) = large diff
+    diff.data[i]     = Math.min(255, d * 2.5);          // R
+    diff.data[i + 1] = Math.max(0, 255 - Math.abs(d - 128) * 3); // G
+    diff.data[i + 2] = Math.max(0, 255 - d * 2.5);      // B
+    diff.data[i + 3] = 255;
+  }
+  ctxB.putImageData(diff, 0, 0);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render: LUT mode (two canvases with LUT applied)
+// ═══════════════════════════════════════════════════════════
+function renderLut() {
+  if (!imgA || !imgB) return;
+  resizeCanvases(imgA, imgB);
+
+  [cA, cB].forEach((c, idx) => {
+    const img = idx === 0 ? imgA : imgB;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true; // always downscaling in LUT fit mode // smooth when downscaling, crisp when zoomed
+    ctx.clearRect(0, 0, c.width, c.height);
+
+    // Scale to fit
+    const iw = img.width, ih = img.height;
+    const scale = Math.min(c.width / iw, c.height / ih);
+    const dw = iw * scale, dh = ih * scale;
+    const dx = (c.width - dw) / 2, dy = (c.height - dh) / 2;
+    ctx.drawImage(img, dx, dy, dw, dh);
+
+    if (activeLut !== 'none') {
+      const imageData = ctx.getImageData(0, 0, c.width, c.height);
+      applyLUTToImageData(imageData, activeLut);
+      ctx.putImageData(imageData, 0, 0);
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Master render dispatcher
+// ═══════════════════════════════════════════════════════════
+function render() {
+  switch (currentTool) {
+    case 'sync': renderSync(); break;
+    case 'blink':
+      resizeCanvases(imgA, imgB);
+      renderBlinkFrame();
+      break;
+    case 'diff': renderDiff(); break;
+    case 'lut': renderLut(); break;
+  }
+  updateFrameHeight();
+}
+
+function updateFrameHeight() {
+  const bodyH = document.body.scrollHeight;
+  setFrameHeight(Math.max(400, Math.ceil(bodyH + 16)));
+}
+
+function updateZoomUI() {
+  document.getElementById('zoomSliderA').value = Math.round(zoomA * 100);
+  document.getElementById('zoomValA').textContent = Math.round(zoomA * 100) + '%';
+  document.getElementById('zoomSliderB').value = Math.round(zoomB * 100);
+  document.getElementById('zoomValB').textContent = Math.round(zoomB * 100) + '%';
+}
+
+// ═══════════════════════════════════════════════════════════
+// Tool switching
+// ═══════════════════════════════════════════════════════════
+function switchTool(tool) {
+  stopBlink();
+  currentTool = tool;
+
+  // Tab active state
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[data-tool="${tool}"]`).classList.add('active');
+
+  // Show/hide controls
+  ['ctrlSync', 'ctrlBlink', 'ctrlDiff', 'ctrlLut'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+  const ctrlMap = { sync: 'ctrlSync', blink: 'ctrlBlink', diff: 'ctrlDiff', lut: 'ctrlLut' };
+  document.getElementById(ctrlMap[tool]).style.display = 'flex';
+
+  // Show/hide explanations
+  ['explainSync', 'explainBlink', 'explainDiff', 'explainLut'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+  const explainMap = { sync: 'explainSync', blink: 'explainBlink', diff: 'explainDiff', lut: 'explainLut' };
+  document.getElementById(explainMap[tool]).style.display = 'block';
+
+  // Show dual canvases (hide blink overlay)
+  document.getElementById('canvasWrap').style.display = 'flex';
+  document.getElementById('blinkWrap').style.display = 'none';
+  document.getElementById('paneB').style.display = (tool === 'sync' || tool === 'diff' || tool === 'lut') ? 'flex' : 'none';
+
+  // Reset zoom/pan for non-sync modes
+  if (tool !== 'sync') {
+    zoomA = 1.0; panXA = 0; panYA = 0;
+    zoomB = 1.0; panXB = 0; panYB = 0;
+  }
+
+  render();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Event listeners
+// ═══════════════════════════════════════════════════════════
+
+// Tab clicks
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => switchTool(tab.dataset.tool));
+});
+
+// Sync: mouse wheel zoom (per-canvas, linked or independent)
+[cA, cB].forEach((c, ci) => {
+  c.addEventListener('wheel', (e) => {
+    if (currentTool !== 'sync') return;
+    e.preventDefault();
+    const rect = c.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / c.width;
+    const my = (e.clientY - rect.top) / c.height;
+    const img = (c === cA) ? imgA : imgB;
+    if (!img) return;
+
+    // Get per-canvas zoom/pan refs
+    const isLinked = linked;
+    let oldZ, zRef, pxRef, pyRef;
+    if (ci === 0) {
+      oldZ = zoomA; zRef = 'A'; pxRef = 'A'; pyRef = 'A';
+    } else {
+      oldZ = zoomB; zRef = 'B'; pxRef = 'B'; pyRef = 'B';
+    }
+
+    let newZ = (ci === 0 ? zoomA : zoomB) * (e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    newZ = Math.max(1, Math.min(20, newZ));
+
+    function applyZoom(which, oldZ_, newZ_) {
+      const z = (which === 'A') ? zoomA : zoomB;
+      const ix = (which === 'A') ? panXA : panXB;
+      const iy = (which === 'A') ? panYA : panYB;
+      const im = (which === 'A') ? imgA : imgB;
+      const oldSW = im.width / oldZ_;
+      const oldSH = im.height / oldZ_;
+      const newSW = im.width / newZ_;
+      const newSH = im.height / newZ_;
+      const oldSX = ix * Math.max(0, im.width - oldSW);
+      const oldSY = iy * Math.max(0, im.height - oldSH);
+      const ptX = oldSX + mx * oldSW;
+      const ptY = oldSY + my * oldSH;
+      let npx = im.width > newSW ? ptX / (im.width - newSW) : 0.5;
+      let npy = im.height > newSH ? ptY / (im.height - newSH) : 0.5;
+      npx = Math.max(0, Math.min(1, npx));
+      npy = Math.max(0, Math.min(1, npy));
+      if (which === 'A') { zoomA = newZ_; panXA = npx; panYA = npy; }
+      else               { zoomB = newZ_; panXB = npx; panYB = npy; }
+    }
+
+    applyZoom(ci === 0 ? 'A' : 'B', oldZ, newZ);
+    if (isLinked) {
+      const other = (ci === 0) ? 'B' : 'A';
+      const otherOldZ = (ci === 0) ? zoomB : zoomA;
+      applyZoom(other, otherOldZ, newZ);
+    }
+
+    updateZoomUI();
+    renderSync();
+  });
+
+  // Sync: mouse drag pan
+  c.addEventListener('mousedown', (e) => {
+    if (currentTool !== 'sync') return;
+    dragging = true;
+    dragStartX = e.offsetX;
+    dragStartY = e.offsetY;
+    // Store which canvas was clicked for pan ref
+    const isA = (c === cA);
+    dragStartPanX = isA ? panXA : panXB;
+    dragStartPanY = isA ? panYA : panYB;
+    activeCanvas = isA ? 'A' : 'B';
+    e.preventDefault();
+  });
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!dragging || currentTool !== 'sync') return;
+  const c = document.elementFromPoint(e.clientX, e.clientY);
+  const targetC = (c === cA || c === cB) ? c : (activeCanvas === 'A' ? cA : cB);
+  const isA = (targetC === cA);
+  const rect = targetC.getBoundingClientRect();
+  const dx = (e.clientX - rect.left - dragStartX) / targetC.width;
+  const dy = (e.clientY - rect.top - dragStartY) / targetC.height;
+
+  const img = isA ? imgA : imgB;
+  if (!img) return;
+  const z = isA ? zoomA : zoomB;
+  const srcW = img.width / z;
+  const srcH = img.height / z;
+  let npx = dragStartPanX - dx * srcW / Math.max(1, img.width - srcW);
+  let npy = dragStartPanY - dy * srcH / Math.max(1, img.height - srcH);
+  npx = Math.max(0, Math.min(1, npx));
+  npy = Math.max(0, Math.min(1, npy));
+
+  if (linked) {
+    // Move both canvases by same delta in image space
+    const oldPXa = panXA, oldPYa = panYA;
+    const deltaPX = npx - oldPXa;
+    const deltaPY = npy - oldPYa;
+    panXA = Math.max(0, Math.min(1, panXA + deltaPX));
+    panYA = Math.max(0, Math.min(1, panYA + deltaPY));
+    panXB = Math.max(0, Math.min(1, panXB + deltaPX));
+    panYB = Math.max(0, Math.min(1, panYB + deltaPY));
+  } else {
+    if (isA) { panXA = npx; panYA = npy; }
+    else     { panXB = npx; panYB = npy; }
+  }
+  renderSync();
+});
+
+window.addEventListener('mouseup', () => { dragging = false; });
+
+// Link toggle
+document.getElementById('btnLink').addEventListener('click', () => {
+  linked = !linked;
+  const btn = document.getElementById('btnLink');
+  const grpB = document.getElementById('grpZoomB');
+  const hint = document.getElementById('hintSync');
+  if (linked) {
+    btn.textContent = '🔗 联动';
+    btn.classList.add('active-btn');
+    grpB.style.display = 'none';
+    hint.textContent = '联动模式：滚轮/拖拽同时作用于两图';
+    // Sync B to A
+    zoomB = zoomA; panXB = panXA; panYB = panYA;
+    updateZoomUI();
+    if (currentTool === 'sync') renderSync();
+  } else {
+    btn.textContent = '🔓 独立';
+    btn.classList.remove('active-btn');
+    grpB.style.display = 'flex';
+    hint.textContent = '独立模式：各图独立缩放/平移，鼠标悬停哪个就控制哪个';
+  }
+});
+
+// Zoom slider A
+document.getElementById('zoomSliderA').addEventListener('input', (e) => {
+  zoomA = parseInt(e.target.value) / 100;
+  document.getElementById('zoomValA').textContent = Math.round(zoomA * 100) + '%';
+  if (linked) {
+    zoomB = zoomA;
+    document.getElementById('zoomSliderB').value = Math.round(zoomB * 100);
+    document.getElementById('zoomValB').textContent = Math.round(zoomB * 100) + '%';
+  }
+  if (currentTool === 'sync') renderSync();
+});
+
+// Zoom slider B
+document.getElementById('zoomSliderB').addEventListener('input', (e) => {
+  zoomB = parseInt(e.target.value) / 100;
+  document.getElementById('zoomValB').textContent = Math.round(zoomB * 100) + '%';
+  if (linked) {
+    zoomA = zoomB;
+    document.getElementById('zoomSliderA').value = Math.round(zoomA * 100);
+    document.getElementById('zoomValA').textContent = Math.round(zoomA * 100) + '%';
+  }
+  if (currentTool === 'sync') renderSync();
+});
+
+// Reset zoom
+document.getElementById('btnReset').addEventListener('click', () => {
+  zoomA = 1.0; panXA = 0; panYA = 0;
+  zoomB = 1.0; panXB = 0; panYB = 0;
+  updateZoomUI();
+  if (currentTool === 'sync') renderSync();
+});
+
+// Blink toggle
+document.getElementById('btnBlink').addEventListener('click', () => {
+  if (blinkActive) stopBlink(); else startBlink();
+});
+
+// Blink speed
+document.getElementById('blinkSpeed').addEventListener('input', (e) => {
+  blinkSpeed = parseInt(e.target.value);
+  document.getElementById('blinkVal').textContent = blinkSpeed + 'ms';
+  if (blinkActive) {
+    clearInterval(blinkTimer);
+    blinkTimer = setInterval(() => {
+      showImageA = !showImageA;
+      renderBlinkFrame();
+    }, blinkSpeed);
+  }
+});
+
+// Diff sliders
+document.getElementById('diffAmp').addEventListener('input', (e) => {
+  document.getElementById('diffAmpVal').textContent = e.target.value + 'x';
+  if (currentTool === 'diff') renderDiff();
+});
+document.getElementById('diffThresh').addEventListener('input', (e) => {
+  document.getElementById('diffThreshVal').textContent = e.target.value;
+  if (currentTool === 'diff') renderDiff();
+});
+document.getElementById('btnDiffReset').addEventListener('click', () => {
+  document.getElementById('diffAmp').value = 5;
+  document.getElementById('diffAmpVal').textContent = '5x';
+  document.getElementById('diffThresh').value = 10;
+  document.getElementById('diffThreshVal').textContent = '10';
+  if (currentTool === 'diff') renderDiff();
+});
+
+// LUT buttons
+document.querySelectorAll('.lut-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.lut-btn').forEach(b => b.classList.remove('active-lut'));
+    btn.classList.add('active-lut');
+    activeLut = btn.dataset.lut;
+    render();
+  });
+});
+
+function updateStatus(msg) {
+  const bar = document.getElementById('statusBar');
+  bar.style.display = 'block';
+  bar.textContent = msg;
+}
+
+// Image data URLs — injected by Python before serving
+const URL_A = (typeof __IMG_A_DATA__ !== 'undefined') ? __IMG_A_DATA__ : '';
+const URL_B = (typeof __IMG_B_DATA__ !== 'undefined') ? __IMG_B_DATA__ : '';
+
+function initImages() {
+  if (!URL_A || !URL_B) {
+    updateStatus('⚠️ 未嵌入图像数据 URL_A=' + (URL_A ? '有' : '空') + ' URL_B=' + (URL_B ? '有' : '空'));
+    return;
+  }
+  updateStatus('正在加载图像...');
+
+  let loaded = 0;
+  function onLoad() {
+    loaded++;
+    updateStatus('图像加载中... (' + loaded + '/2)');
+    if (loaded === 2) {
+      updateStatus('✓ 两图已加载 A=' + imgA.width + 'x' + imgA.height + ' B=' + imgB.width + 'x' + imgB.height);
+      updateZoomUI();
+      switchTool(currentTool);
+    }
+  }
+  function onError(imgName) {
+    loaded++;
+    updateStatus('❌ 图像加载失败: ' + imgName + ' (' + loaded + '/2)');
+    if (loaded === 2) switchTool(currentTool);
+  }
+
+  imgA = new Image();
+  imgA.onload = onLoad;
+  imgA.onerror = function() { onError('Image A len=' + URL_A.length); };
+  imgA.src = URL_A;
+
+  imgB = new Image();
+  imgB.onload = onLoad;
+  imgB.onerror = function() { onError('Image B len=' + URL_B.length); };
+  imgB.src = URL_B;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  updateStatus('DOM 就绪，开始加载图像...');
+  initImages();
+});
+</script>
+</body>
+</html>

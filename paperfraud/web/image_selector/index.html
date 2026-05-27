@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+  body { margin:0; overflow:hidden; background:#f5f5f5; }
+  canvas { display:block; max-width:100%; height:auto; cursor:crosshair; margin:0 auto; }
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ── Minimal Streamlit component protocol (zero external deps) ──────────
+const RENDER_EVENT = 'streamlit:render';
+
+function sendReady() {
+  window.parent.postMessage({ type: 'streamlit:componentReady' }, '*');
+}
+
+function sendValue(data) {
+  window.parent.postMessage({ type: 'streamlit:setComponentValue', data: data }, '*');
+}
+
+function setFrameHeight(h) {
+  window.parent.postMessage({ type: 'streamlit:setFrameHeight', height: h }, '*');
+}
+
+// ── Component state ────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let img = null;
+let rect = null;        // {x, y, w, h} in percentages
+let drawing = false;
+let dragging = false;
+let dragOffX = 0, dragOffY = 0;
+
+// ── Coordinate helpers ─────────────────────────────────────────────────
+function pctToPx(r) {
+  return r ? {
+    x: r.x / 100 * canvas.width,
+    y: r.y / 100 * canvas.height,
+    w: r.w / 100 * canvas.width,
+    h: r.h / 100 * canvas.height
+  } : null;
+}
+
+function pxToPct(px) {
+  return {
+    x: +(px.x / canvas.width * 100).toFixed(1),
+    y: +(px.y / canvas.height * 100).toFixed(1),
+    w: +(px.w / canvas.width * 100).toFixed(1),
+    h: +(px.h / canvas.height * 100).toFixed(1)
+  };
+}
+
+// ── Drawing ─────────────────────────────────────────────────────────────
+function redraw() {
+  if (!img) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  if (!rect) return;
+  const r = pctToPx(rect);
+  if (!r || r.w < 2 || r.h < 2) return;
+  // Dim overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(0, 0, canvas.width, r.y);
+  ctx.fillRect(0, r.y, r.x, r.h);
+  ctx.fillRect(r.x + r.w, r.y, canvas.width - r.x - r.w, r.h);
+  ctx.fillRect(0, r.y + r.h, canvas.width, canvas.height - r.y - r.h);
+  // Border
+  ctx.strokeStyle = '#2196F3';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+  // Corner handles
+  ctx.fillStyle = '#2196F3';
+  [[r.x,r.y],[r.x+r.w,r.y],[r.x,r.y+r.h],[r.x+r.w,r.y+r.h]].forEach(function(p) {
+    ctx.fillRect(p[0]-4, p[1]-4, 8, 8);
+  });
+}
+
+function inside(px, r) { return px.x >= r.x && px.x <= r.x + r.w && px.y >= r.y && px.y <= r.y + r.h; }
+
+// ── Mouse events (mouseup only → send value, not during drag) ──────────
+canvas.addEventListener('mousedown', function(e) {
+  var pos = {x: e.offsetX, y: e.offsetY};
+  var r = pctToPx(rect);
+  if (r && inside(pos, r)) {
+    dragging = true;
+    dragOffX = pos.x - r.x;
+    dragOffY = pos.y - r.y;
+  } else {
+    drawing = true;
+    rect = {x: pos.x / canvas.width * 100, y: pos.y / canvas.height * 100, w: 0, h: 0};
+  }
+  e.preventDefault();
+});
+
+canvas.addEventListener('mousemove', function(e) {
+  var pos = {x: e.offsetX, y: e.offsetY};
+  if (drawing) {
+    rect.w = (pos.x / canvas.width * 100) - rect.x;
+    rect.h = (pos.y / canvas.height * 100) - rect.y;
+    redraw();
+  } else if (dragging) {
+    var r = pctToPx(rect);
+    if (!r) return;
+    var nx = Math.max(0, Math.min(canvas.width - r.w, pos.x - dragOffX));
+    var ny = Math.max(0, Math.min(canvas.height - r.h, pos.y - dragOffY));
+    rect = pxToPct({x: nx, y: ny, w: r.w, h: r.h});
+    redraw();
+  } else if (rect) {
+    var _r = pctToPx(rect);
+    canvas.style.cursor = (_r && inside(pos, _r)) ? 'move' : 'crosshair';
+  }
+});
+
+canvas.addEventListener('mouseup', function() {
+  if (!drawing && !dragging) return;
+  // Normalize
+  if (rect.w < 0) { rect.x += rect.w; rect.w = -rect.w; }
+  if (rect.h < 0) { rect.y += rect.h; rect.h = -rect.h; }
+  // Clamp
+  rect.x = Math.max(0, Math.min(100, rect.x));
+  rect.y = Math.max(0, Math.min(100, rect.y));
+  rect.w = Math.max(1, Math.min(100 - rect.x, rect.w));
+  rect.h = Math.max(1, Math.min(100 - rect.y, rect.h));
+  // Send to Streamlit (ONLY on mouseup, not mousemove)
+  sendValue(rect);
+  drawing = false;
+  dragging = false;
+});
+
+canvas.addEventListener('dblclick', function() {
+  rect = null;
+  redraw();
+  sendValue(null);
+});
+
+canvas.addEventListener('mouseleave', function() {
+  if (drawing || dragging) {
+    canvas.dispatchEvent(new MouseEvent('mouseup'));
+  }
+});
+
+// ── Streamlit render callback ──────────────────────────────────────────
+window.addEventListener('message', function(event) {
+  if (event.data.type !== RENDER_EVENT) return;
+  var args = event.data.args || {};
+
+  // Always start fresh — no stale state from previous sessions or images
+  rect = null;
+
+  // Load image
+  var dataUrl = args.image_data_url || '';
+  img = new Image();
+  img.onload = function() {
+    canvas.width = img.width;
+    canvas.height = img.height;
+    redraw();
+    setFrameHeight(img.height + 4);
+    sendReady();
+  };
+  img.src = dataUrl;
+});
+</script>
+</body>
+</html>
