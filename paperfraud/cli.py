@@ -180,7 +180,7 @@ def check(
     max_pages: int = typer.Option(0, "--max-pages", help="Max pages to parse (0 = all)"),
     data_file: Optional[Path] = typer.Option(None, "--data-file", help="CSV/TSV file with supplementary numeric data for Benford/GRIM checks"),
     output_dir: Optional[Path] = typer.Option(None, "--output-dir", help="Persistent output directory for images and report"),
-    web: bool = typer.Option(False, "--web", help="Run checks and launch Streamlit dashboard"),
+    web: bool = typer.Option(True, "--web/--no-web", help="Launch Streamlit dashboard after check (default: on)"),
     web_port: int = typer.Option(8501, "--web-port", help="Streamlit server port (used with --web)"),
     review: bool = typer.Option(False, "--review", help="Run LLM qualitative review on detection results (requires DEEPSEEK_API_KEY)"),
 ):
