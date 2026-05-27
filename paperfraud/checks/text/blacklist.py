@@ -13,21 +13,51 @@ from paperfraud.base import CheckResult, SourceLocation
 
 
 def _load_blacklist_terms() -> dict[str, list[str]]:
-    """Load blacklist terms from YAML config, falling back to hardcoded defaults."""
-    _YAML_PATH = Path(__file__).resolve().parent / "blacklist.yaml"
+    """Load blacklist terms from YAML config, falling back to hardcoded defaults.
 
+    Merges two sources:
+      1. Static: checks/text/blacklist.yaml (curated by developers)
+      2. Dynamic: paperfraud_data/blacklist.yaml (crawler + LLM + human review)
+    """
+    import yaml
+
+    _STATIC_PATH = Path(__file__).resolve().parent / "blacklist.yaml"
+    _DYNAMIC_PATH = Path(__file__).resolve().parent.parent.parent.parent / "paperfraud_data" / "blacklist.yaml"
+
+    result = {
+        "absolute": [],
+        "overclaim": [],
+        "inflated": [],
+    }
+
+    # Load static rules
     try:
-        import yaml
-        if _YAML_PATH.exists():
-            data = yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8"))
-            return {
-                "absolute": data.get("absolute", []),
-                "overclaim": data.get("overclaim", []),
-                "inflated": data.get("inflated", []),
-            }
+        if _STATIC_PATH.exists():
+            data = yaml.safe_load(_STATIC_PATH.read_text(encoding="utf-8"))
+            result["absolute"] = list(data.get("absolute", []))
+            result["overclaim"] = list(data.get("overclaim", []))
+            result["inflated"] = list(data.get("inflated", []))
     except Exception:
         pass
 
+    # Merge dynamic rules from crawler output
+    try:
+        if _DYNAMIC_PATH.exists():
+            data = yaml.safe_load(_DYNAMIC_PATH.read_text(encoding="utf-8"))
+            for p in data.get("patterns", []):
+                pattern = p.get("pattern", "")
+                if pattern:
+                    # Dynamic blacklist patterns go into 'inflated' category
+                    # since they're paper-mill clichés / camouflage phrases
+                    if pattern not in result["inflated"]:
+                        result["inflated"].append(pattern)
+    except Exception:
+        pass
+
+    if any(result.values()):
+        return result
+
+    # Hardcoded fallback
     return {
         "absolute": [
             "definitively", "unequivocally", "undoubtedly", "absolutely",

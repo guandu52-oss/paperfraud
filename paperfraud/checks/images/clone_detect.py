@@ -41,16 +41,15 @@ def _average_hash(block: np.ndarray) -> bytes:
     """Compute averageHash for an image block (8×8 → 64-bit hash).
 
     Reimplements cv2.img_hash.averageHash which is only in opencv-contrib.
+    Uses numpy vectorized bit-packing instead of Python string join.
     """
     resized = cv2.resize(block, (8, 8), interpolation=cv2.INTER_LINEAR)
     avg = resized.mean()
     bits = (resized > avg).flatten()
-    # Pack 8 bits → 1 byte
-    return bytes(int(''.join(str(int(b)) for b in bits[i:i + 8]), 2)
-                 for i in range(0, 64, 8))
+    return np.packbits(bits).tobytes()
 
 
-def _is_uniform_block(block: np.ndarray, variance_threshold: float = 15.0) -> bool:
+def _is_uniform_block(block: np.ndarray, variance_threshold: float = 50.0) -> bool:
     """Check if a block is a uniform background (no meaningful content)."""
     return bool(np.var(block) < variance_threshold)
 
@@ -68,12 +67,13 @@ def detect_clones(image_path: Path) -> dict:
 
     h, w = img.shape
     block_size = _block_size_for_image(h, w)
-    stride = block_size // 2  # 50% overlap
+    stride = block_size  # no overlap — 4x fewer blocks than block_size/2
 
     if block_size >= min(h, w):
         return {"clone_count": 0, "clones": [], "note": f"图像太小 ({w}×{h})，块大小 {block_size}px 不适用"}
 
     # Collect block hashes and positions
+    MAX_POSITIONS_PER_HASH = 100
     hash_positions: dict[str, list[tuple[int, int]]] = {}
 
     for y in range(0, h - block_size + 1, stride):
@@ -83,19 +83,21 @@ def detect_clones(image_path: Path) -> dict:
                 continue
             hash_bytes = _average_hash(block)
             key = hash_bytes.hex()
-            hash_positions.setdefault(key, []).append((x, y))
+            positions = hash_positions.get(key)
+            if positions is None:
+                hash_positions[key] = [(x, y)]
+            elif len(positions) < MAX_POSITIONS_PER_HASH:
+                positions.append((x, y))
 
     # Find blocks with identical hashes at different positions
     clones = []
     for key, positions in hash_positions.items():
         if len(positions) < 2:
             continue
-        # Group positions by spatial clusters (different positions = different clusters)
         for i in range(len(positions)):
             for j in range(i + 1, len(positions)):
                 dx = abs(positions[i][0] - positions[j][0])
                 dy = abs(positions[i][1] - positions[j][1])
-                # Self-match: overlapping blocks of the same region
                 if dx < block_size and dy < block_size:
                     continue
                 clones.append({
@@ -104,15 +106,17 @@ def detect_clones(image_path: Path) -> dict:
                     "size": block_size,
                 })
 
-    # Deduplicate: if clones point to the same pair of regions, keep one
+    # O(n) spatial dedup via grid cells
     unique_clones = []
-    seen_pairs: set[tuple] = set()
+    grid = block_size
+    seen_cells: set[tuple] = set()
     for c in clones:
-        pair = (min(c["x1"], c["x2"]), min(c["y1"], c["y2"]),
-                max(c["x1"], c["x2"]), max(c["y1"], c["y2"]))
-        if not any(abs(pair[0] - p[0]) < block_size // 2 and abs(pair[1] - p[1]) < block_size // 2
-                   for p in seen_pairs):
-            seen_pairs.add(pair)
+        x1, y1, x2, y2 = c["x1"], c["y1"], c["x2"], c["y2"]
+        if (x1, y1) > (x2, y2):
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        cell = (x1 // grid, y1 // grid, x2 // grid, y2 // grid)
+        if cell not in seen_cells:
+            seen_cells.add(cell)
             unique_clones.append(c)
 
     return {

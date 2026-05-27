@@ -238,8 +238,122 @@ def _generate_image_report(image_path: Path, output_dir: Path) -> Path:
     return report_path
 
 
+# ── Knowledge Review ────────────────────────────────────────────────────────
+
+def _knowledge_review() -> None:
+    """Review desk for crawler + LLM extracted fraud patterns."""
+    import yaml
+    from paperfraud.crawler.store import (
+        approve_pattern,
+        get_pending_patterns,
+        init_db,
+        reject_pattern,
+    )
+
+    db_path = Path(__file__).resolve().parent.parent.parent / "paperfraud_data" / "crawler.db"
+
+    if not db_path.exists():
+        st.info("数据库尚未初始化。请先运行 `paperfraud crawl --sync` 拉取数据。")
+        return
+
+    init_db(db_path)
+    pending = get_pending_patterns(db_path)
+
+    if not pending:
+        st.success("没有待审核的候选规则。运行 `paperfraud crawl --learn` 提取新模式。")
+        return
+
+    st.markdown(f"### {len(pending)} 条候选规则待审核")
+
+    for i, p in enumerate(pending):
+        cat_label = "🔤 词汇黑名单" if p["category"] == "blacklist" else "📝 句式模板"
+        sev_emoji = {"high": "🔴", "medium": "🟠", "low": "🟡"}.get(p["severity"], "⚪")
+
+        with st.expander(
+            f"{sev_emoji} {cat_label} | {p['technique'][:80]}",
+            expanded=i == 0,
+        ):
+            col_left, col_right = st.columns([3, 2])
+
+            with col_left:
+                st.markdown("**来源帖子**")
+                st.markdown(f"[{p.get('post_title', p['post_id'])[:120]}]({p.get('post_url', '')})")
+                if p.get("post_content"):
+                    with st.expander("帖子原文（前 2000 字）"):
+                        st.text_area("", p["post_content"][:2000], height=200, key=f"post_{p['id']}")
+
+                st.markdown("**LLM 提取信息**")
+                st.markdown(f"> **手法**: {p['technique']}")
+                st.markdown(f"> **检测建议**: {p['detection_hint']}")
+
+            with col_right:
+                st.markdown(f"**严重程度**: {p['severity']}")
+                st.markdown(f"**分类**: {p['category']}")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✓ 采纳", key=f"approve_{p['id']}", type="primary", use_container_width=True):
+                        approve_pattern(db_path, p["id"])
+                        _write_pattern_to_yaml(p)
+                        st.success("已采纳并写入知识库")
+                        st.rerun()
+                with c2:
+                    if st.button("✗ 拒绝", key=f"reject_{p['id']}", use_container_width=True):
+                        reject_pattern(db_path, p["id"])
+                        st.warning("已拒绝")
+                        st.rerun()
+
+    st.divider()
+    st.caption(
+        "采纳的规则写入 `paperfraud_data/` 下的 YAML 文件，"
+        "下次运行 `paperfraud check` 时自动加载。"
+    )
+
+
+def _write_pattern_to_yaml(pattern: dict) -> None:
+    """Write an approved pattern to the appropriate YAML file."""
+    import yaml
+    from datetime import date
+
+    data_dir = Path(__file__).resolve().parent.parent.parent / "paperfraud_data"
+    yaml_file = data_dir / f"{pattern['category']}.yaml"
+
+    data: dict = {"patterns": []}
+    if yaml_file.exists():
+        try:
+            data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {"patterns": []}
+        except Exception:
+            data = {"patterns": []}
+
+    entry = {
+        "pattern": pattern.get("detection_hint", ""),
+        "category": pattern.get("category", "blacklist"),
+        "technique": pattern.get("technique", ""),
+        "severity": pattern.get("severity", "medium"),
+        "source": pattern.get("post_url", ""),
+        "added": str(date.today()),
+    }
+
+    existing_patterns = {p.get("pattern", "") for p in data.get("patterns", [])}
+    if entry["pattern"] not in existing_patterns:
+        data.setdefault("patterns", []).append(entry)
+        yaml_file.write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+
+
 # ── Landing page (no report loaded) ──────────────────────────────────────────
 if _report_file is None:
+    if st.query_params.get("knowledge") == "1":
+        st.title("🧠 知识进化")
+        st.caption("爬虫 + LLM 提取的论文造假模式，人工审核后注入检测引擎")
+        _knowledge_review()
+        if st.button("🏠 返回首页"):
+            st.query_params.clear()
+            st.rerun()
+        st.stop()
+
     st.title("🔬 Paper Fraud Dashboard")
 
     if _available_reports:
@@ -333,6 +447,13 @@ if _report_file is None:
 
         st.query_params["report"] = str(report_path)
         st.rerun()
+
+    # ── Knowledge review link ──────────────────────────────────────────────
+    _, col_know = st.columns([3, 2])
+    with col_know:
+        if st.button("🧠 知识进化 — 审核爬虫提取的造假模式", use_container_width=True):
+            st.query_params["knowledge"] = "1"
+            st.rerun()
 
     if not _available_reports:
         st.info("请输入报告路径、上传文件，或使用 URL 参数。")
@@ -1308,6 +1429,7 @@ page = st.sidebar.radio("导航", [
     "🤖 LLM 审查",
     "📝 PubPeer 草稿",
     "📥 导出报告",
+    "🧠 知识进化",
 ])
 
 st.sidebar.markdown("---")
@@ -1477,3 +1599,8 @@ elif page == "📥 导出报告":
         "report.json",
         key="dl_json",
     )
+
+elif page == "🧠 知识进化":
+    st.title("🧠 知识进化")
+    st.caption("爬虫 + LLM 提取的论文造假模式，人工审核后注入检测引擎")
+    _knowledge_review()

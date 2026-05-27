@@ -351,7 +351,7 @@ class TestAggregateResults:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -m pytest tests/test_aggregator.py -v
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -m pytest tests/test_aggregator.py -v
 ```
 
 Expected: All tests FAIL — `ModuleNotFoundError` or `ImportError` for new functions.
@@ -661,7 +661,7 @@ def aggregate_results(results: list[CheckResult]) -> dict:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -m pytest tests/test_aggregator.py -v
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -m pytest tests/test_aggregator.py -v
 ```
 
 Expected: All 23 tests PASS.
@@ -669,7 +669,7 @@ Expected: All 23 tests PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && git add tests/test_aggregator.py paperfraud/report/aggregator.py && git commit -m "feat: rewrite aggregator with weighted risk scoring engine
+cd /Users/chaco/Desktop/paper fraud/paperfraud && git add tests/test_aggregator.py paperfraud/report/aggregator.py && git commit -m "feat: rewrite aggregator with weighted risk scoring engine
 
 - Replace simple red-count logic with 0-100 Fraud Risk Score
 - Add detection weights (GRIM=1.0 ... blacklist=0.3) quantifying domain knowledge
@@ -1010,7 +1010,7 @@ def build_review_prompt(
 - [ ] **Step 2: Verify the module imports correctly**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -c "from paperfraud.review.prompts import SYSTEM_PROMPT, build_review_prompt, _extract_evidence_paragraphs; print('SYSTEM_PROMPT length:', len(SYSTEM_PROMPT)); print('OK')"
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -c "from paperfraud.review.prompts import SYSTEM_PROMPT, build_review_prompt, _extract_evidence_paragraphs; print('SYSTEM_PROMPT length:', len(SYSTEM_PROMPT)); print('OK')"
 ```
 
 Expected: `SYSTEM_PROMPT length: <number>` followed by `OK`, no errors.
@@ -1018,7 +1018,7 @@ Expected: `SYSTEM_PROMPT length: <number>` followed by `OK`, no errors.
 - [ ] **Step 3: Test evidence extraction on sample text**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -c "
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -c "
 from paperfraud.review.prompts import _extract_evidence_paragraphs, EVIDENCE_KEYWORDS
 sample = '''The mice were housed at 22C.
 
@@ -1042,7 +1042,7 @@ Expected: Extracted paragraphs contain `triplicate`, `n=3`, `p<0.05`, does NOT c
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && git add paperfraud/review/prompts.py && git commit -m "feat: rewrite LLM review prompt with Methods/Results injection and few-shot calibration
+cd /Users/chaco/Desktop/paper fraud/paperfraud && git add paperfraud/review/prompts.py && git commit -m "feat: rewrite LLM review prompt with Methods/Results injection and few-shot calibration
 
 - Replace blind abstract truncation with keyword-targeted evidence extraction
   from Methods and Results sections (EVIDENCE_KEYWORDS)
@@ -1087,7 +1087,7 @@ new_string: "        temperature=0.05,\n        max_tokens=8192,\n    )\n\n    r
 - [ ] **Step 2: Commit**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && git add paperfraud/review/llm_review.py && git commit -m "feat: increase LLM max_tokens to 8192, lower temperature to 0.05
+cd /Users/chaco/Desktop/paper fraud/paperfraud && git add paperfraud/review/llm_review.py && git commit -m "feat: increase LLM max_tokens to 8192, lower temperature to 0.05
 
 - Prevents output truncation for papers with many signals
 - Improves output consistency across providers"
@@ -1135,13 +1135,13 @@ Insert risk score display after it:
 The `needs_human` list changed from `list[CheckResult]` to `list[dict]`. Since `_print_terminal_report` only accesses `aggregated["needs_human_count"]` (not iterating the list), no changes needed. Verify:
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && grep -n "needs_human" paperfraud/cli.py
+cd /Users/chaco/Desktop/paper fraud/paperfraud && grep -n "needs_human" paperfraud/cli.py
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && git add paperfraud/cli.py && git commit -m "feat: add risk_score bar and breakdown to terminal report
+cd /Users/chaco/Desktop/paper fraud/paperfraud && git add paperfraud/cli.py && git commit -m "feat: add risk_score bar and breakdown to terminal report
 
 - Visual 0-100 risk score bar with color coding
 - Veto trigger warning display
@@ -1216,7 +1216,7 @@ In `format_markdown`, after the summary table (after line 90), add:
 - [ ] **Step 3: Verify formatter import doesn't break**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -c "
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -c "
 from paperfraud.report.formatter import format_json, format_markdown
 from paperfraud.base import CheckResult
 from paperfraud.report.aggregator import aggregate_results
@@ -1238,7 +1238,7 @@ Expected: Both `OK` messages.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && git add paperfraud/report/formatter.py && git commit -m "feat: add risk_score and breakdown to JSON/Markdown reports
+cd /Users/chaco/Desktop/paper fraud/paperfraud && git add paperfraud/report/formatter.py && git commit -m "feat: add risk_score and breakdown to JSON/Markdown reports
 
 - JSON summary now includes risk_score and risk_breakdown
 - Markdown report now includes risk score section with contribution table"
@@ -1254,7 +1254,7 @@ cd /Users/chaco/Desktop/耿同学打假/paperfraud && git add paperfraud/report/
 - [ ] **Step 1: Run check on akkermansia.pdf (no images)**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/akkermansia.pdf" 2>&1 | head -60
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/akkermansia.pdf" 2>&1 | head -60
 ```
 
 Expected: Runs without errors. Output shows risk score bar. No `KeyError` or `AttributeError`.
@@ -1262,7 +1262,7 @@ Expected: Runs without errors. Output shows risk score bar. No `KeyError` or `At
 - [ ] **Step 2: Run check on tveq.pdf (with images)**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/tveq.pdf" --extract-images --output-dir /tmp/tveq_test 2>&1 | head -80
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/tveq.pdf" --extract-images --output-dir /tmp/tveq_test 2>&1 | head -80
 ```
 
 Expected: Runs without errors. Images extracted. Report JSON saved.
@@ -1270,7 +1270,7 @@ Expected: Runs without errors. Images extracted. Report JSON saved.
 - [ ] **Step 3: Verify report.json has new fields**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -c "
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -c "
 import json
 with open('/tmp/tveq_test/report.json') as f:
     data = json.load(f)
@@ -1289,7 +1289,7 @@ Expected: Prints risk_score, level, verdict. `OK`.
 - [ ] **Step 4: Run markdown output format**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/akkermansia.pdf" --output markdown 2>&1 | head -50
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/akkermansia.pdf" --output markdown 2>&1 | head -50
 ```
 
 Expected: Markdown output includes "欺诈风险评分" section.
@@ -1297,7 +1297,7 @@ Expected: Markdown output includes "欺诈风险评分" section.
 - [ ] **Step 5: Run JSON output format**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/akkermansia.pdf" --output json 2>&1 | python -m json.tool > /dev/null && echo "Valid JSON: OK"
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/akkermansia.pdf" --output json 2>&1 | python -m json.tool > /dev/null && echo "Valid JSON: OK"
 ```
 
 Expected: `Valid JSON: OK`.
@@ -1322,7 +1322,7 @@ Only if integration tests revealed issues requiring code changes.
 - [ ] **Step 1: Run check + review on tveq.pdf**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/tveq.pdf" --output-dir /tmp/tveq_review --review 2>&1
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -m paperfraud.cli check "tests/fixtures/tveq.pdf" --output-dir /tmp/tveq_review --review 2>&1
 ```
 
 Expected (if `DEEPSEEK_API_KEY` is set):
@@ -1336,7 +1336,7 @@ If `DEEPSEEK_API_KEY` is not set, skip this task.
 - [ ] **Step 2: Verify llm_review structure in JSON**
 
 ```bash
-cd /Users/chaco/Desktop/耿同学打假/paperfraud && PYTHONPATH="." python -c "
+cd /Users/chaco/Desktop/paper fraud/paperfraud && PYTHONPATH="." python -c "
 import json
 with open('/tmp/tveq_review/report.json') as f:
     data = json.load(f)

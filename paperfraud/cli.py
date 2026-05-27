@@ -216,8 +216,8 @@ def check(
     max_pages: int = typer.Option(0, "--max-pages", help="Max pages to parse (0 = all)"),
     data_file: Optional[Path] = typer.Option(None, "--data-file", help="CSV/TSV file with supplementary numeric data for Benford/GRIM checks"),
     output_dir: Optional[Path] = typer.Option(None, "--output-dir", help="Persistent output directory for images and report"),
-    web: bool = typer.Option(True, "--web/--no-web", help="Launch Streamlit dashboard after check (default: on)"),
-    web_port: int = typer.Option(8501, "--web-port", help="Streamlit server port (used with --web)"),
+    web: bool = typer.Option(False, "--web/--no-web", help="Launch Streamlit dashboard after check"),
+    web_port: int = typer.Option(8502, "--web-port", help="Streamlit server port (used with --web)"),
     review: bool = typer.Option(False, "--review", help="Run LLM qualitative review on detection results (requires DEEPSEEK_API_KEY)"),
 ):
     """Analyze a paper for potential fraud signals.
@@ -677,6 +677,11 @@ def review(
         console.print(f"[red]LLM 审查失败: {e}[/red]")
         raise typer.Exit(1)
 
+    # Write LLM review back to the original report.json
+    data["llm_review"] = llm_result.to_dict()
+    json_file.write_text(_json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    console.print(f"[dim]LLM 审查已写回: {json_file}[/dim]")
+
     # Print review
     console.print()
     console.print(Panel.fit("[bold cyan]LLM 定性审查[/bold cyan]", border_style="cyan"))
@@ -719,7 +724,7 @@ def review(
 @app.command()
 def serve(
     directory: Path = typer.Argument(..., help="Directory containing report.json files (e.g. output/)"),
-    port: int = typer.Option(8501, "--port", "-p", help="Streamlit server port"),
+    port: int = typer.Option(8502, "--port", "-p", help="Streamlit server port"),
 ):
     """Launch Streamlit dashboard with multi-report switching.
 
@@ -894,6 +899,14 @@ def doctor():
         console.print("[bold yellow]⚠️ 存在未解决的问题，请按上方 [修复] 提示操作[/bold yellow]")
 
     console.print()
+
+
+# ── Crawler subcommand ───────────────────────────────────────────────────
+try:
+    from paperfraud.crawler.cli import crawl_app
+    app.add_typer(crawl_app, name="crawl")
+except ImportError:
+    pass
 
 
 def main():

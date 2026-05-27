@@ -14,17 +14,44 @@ from paperfraud.base import CheckResult, SourceLocation
 
 
 def _load_camouflage_patterns() -> list[tuple[str, str]]:
-    """Load camouflage patterns from YAML config, falling back to hardcoded defaults."""
-    _YAML_PATH = Path(__file__).resolve().parent / "camouflage.yaml"
+    """Load camouflage patterns from YAML config, falling back to hardcoded defaults.
 
+    Merges two sources:
+      1. Static: checks/text/camouflage.yaml (curated by developers)
+      2. Dynamic: paperfraud_data/camouflage.yaml (crawler + LLM + human review)
+    """
+    import yaml
+
+    _STATIC_PATH = Path(__file__).resolve().parent / "camouflage.yaml"
+    _DYNAMIC_PATH = Path(__file__).resolve().parent.parent.parent.parent / "paperfraud_data" / "camouflage.yaml"
+
+    patterns: list[tuple[str, str]] = []
+
+    # Load static rules
     try:
-        import yaml
-        if _YAML_PATH.exists():
-            data = yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8"))
-            patterns = data.get("patterns", [])
-            return [(p["regex"], p["explanation"]) for p in patterns]
+        if _STATIC_PATH.exists():
+            data = yaml.safe_load(_STATIC_PATH.read_text(encoding="utf-8"))
+            for p in data.get("patterns", []):
+                patterns.append((p["regex"], p["explanation"]))
     except Exception:
         pass
+
+    # Merge dynamic rules from crawler output
+    try:
+        if _DYNAMIC_PATH.exists():
+            data = yaml.safe_load(_DYNAMIC_PATH.read_text(encoding="utf-8"))
+            for p in data.get("patterns", []):
+                pattern = p.get("pattern", "")
+                technique = p.get("technique", "")
+                if pattern:
+                    # Escape for regex and use as literal pattern
+                    escaped = re.escape(pattern)
+                    patterns.append((escaped, technique))
+    except Exception:
+        pass
+
+    if patterns:
+        return patterns
 
     return [
         (r'(?:trending|tend(?:ed|ing)?)\s+towards?\s+(?:statistical\s+)?significance',

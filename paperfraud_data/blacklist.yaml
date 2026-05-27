@@ -1,0 +1,7 @@
+patterns:
+- pattern: 检查文中是否有类似'presumably'、'so-called'等不确定或模糊的表述，可能表明作者未实际使用该方法。
+  category: blacklist
+  technique: 使用特定短语如'presumably a specific method or algorithm'来模糊描述，暗示作者可能对方法不熟悉或存在抄袭。
+  severity: medium
+  source: https://pubpeer.com/publications/C715DC549CAAAC8BA5664557AB0D4C
+  added: '2026-05-27'

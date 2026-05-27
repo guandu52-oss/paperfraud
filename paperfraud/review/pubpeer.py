@@ -1,28 +1,61 @@
 """PubPeer integration — search for existing comments on a paper.
 
-Uses PubPeer's public search endpoint. Rate-limited, no authentication required.
+Note: PubPeer's legacy public API (pubsearch) was shut down in 2024.
+The replacement internal API requires CSRF tokens for search and
+authentication for comment text. search_pubpeer() now returns
+metadata-only results (comment count, URL) without full text.
 """
 
 from __future__ import annotations
 
-import json
-import urllib.request
-import urllib.parse
-import urllib.error
+import re
 from typing import Any
 
+import httpx
 
-PUBPEER_SEARCH_URL = "https://pubpeer.com/api/pubsearch"
+PUBPEER_HOME = "https://pubpeer.com"
+SEARCH_URL = "https://pubpeer.com/api/search/"
+
+
+async def _get_csrf_token(client: httpx.AsyncClient) -> str:
+    try:
+        resp = await client.get(
+            PUBPEER_HOME,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        match = re.search(r'"csrfToken"\s*:\s*"([^"]+)"', resp.text)
+        return match.group(1) if match else ""
+    except Exception:
+        return ""
+
+
+async def _search_async(query: str) -> dict[str, Any]:
+    """Async search for a paper on PubPeer."""
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        csrf = await _get_csrf_token(client)
+        if not csrf:
+            return {"error": "无法获取 PubPeer CSRF token"}
+
+        try:
+            resp = await client.get(
+                f"{SEARCH_URL}?q={query}&token={csrf}",
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            return {"error": f"PubPeer 查询失败: {e}"}
 
 
 def search_pubpeer(title: str = "", doi: str = "") -> dict[str, Any]:
     """Search PubPeer for comments on a paper.
 
-    Returns dict with:
-      - has_comments: bool
-      - comments: list of {title, content, date, author} (may be partial)
-      - error: str or None
-      - url: str — PubPeer URL if found
+    Returns metadata (comment count, URL) but NOT comment text,
+    which requires PubPeer login.
     """
     result: dict[str, Any] = {
         "has_comments": False,
@@ -31,44 +64,37 @@ def search_pubpeer(title: str = "", doi: str = "") -> dict[str, Any]:
         "url": "",
     }
 
-    query = doi if doi else title[:300]
-    if not query.strip():
+    query = doi.strip() if doi else title[:300].strip()
+    if not query:
         result["error"] = "未提供标题或 DOI"
         return result
 
-    params = urllib.parse.urlencode({"search": query})
-    url = f"{PUBPEER_SEARCH_URL}?{params}"
-
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "paperfraud-detect/0.2.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        result["error"] = f"PubPeer HTTP {e.code}"
-        return result
+        import asyncio
+        data = asyncio.run(_search_async(query))
     except Exception as e:
         result["error"] = f"PubPeer 查询失败: {e}"
         return result
 
-    publications = data.get("publications", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+    if "error" in data:
+        result["error"] = data["error"]
+        return result
 
+    publications = data.get("publications", [])
     if not publications:
         return result
 
     pub = publications[0]
-    result["url"] = pub.get("url", "")
+    pubpeer_id = pub.get("pubpeer_id", "")
+    result["url"] = f"https://pubpeer.com/publications/{pubpeer_id}" if pubpeer_id else ""
 
-    reviews = pub.get("reviews", [])
-    if not reviews:
-        return result
-
-    result["has_comments"] = True
-    for review in reviews[:10]:
-        comment = review.get("comment", {})
+    comments_total = pub.get("comments_total", 0)
+    if comments_total > 0:
+        result["has_comments"] = True
         result["comments"].append({
-            "user": review.get("user_name", review.get("user", {}).get("name", "Anonymous")),
-            "date": review.get("date", ""),
-            "content": (comment.get("text", "") or "")[:2000],
+            "user": "PubPeer",
+            "date": pub.get("last_commented", ""),
+            "content": f"该论文在 PubPeer 上有 {comments_total} 条评论。请访问 {result['url']} 查看详情。",
         })
 
     return result
@@ -92,8 +118,7 @@ def format_pubpeer_context(pubpeer_result: dict[str, Any]) -> str:
         lines.append(c["content"][:2000])
         lines.append("")
 
-    lines.append("注意：如果 PubPeer 评论提出了已在社区引发讨论的质疑，")
-    lines.append("请在你的审查意见中考虑这些质疑角度，但不要简单重复已有评论。")
+    lines.append("注意：评论全文需登录 PubPeer 查看。")
     lines.append("")
 
     return "\n".join(lines)
