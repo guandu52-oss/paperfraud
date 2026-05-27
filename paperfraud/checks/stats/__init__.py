@@ -7,5 +7,6 @@ Detects common statistical errors such as:
 
 from paperfraud.checks.stats.normality_claim import run_normality_claim
 from paperfraud.checks.stats.fallacies import run_fallacies
+from paperfraud.checks.stats.method_misuse import run_method_misuse
 
-__all__ = ["run_normality_claim", "run_fallacies"]
+__all__ = ["run_normality_claim", "run_fallacies", "run_method_misuse"]

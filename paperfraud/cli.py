@@ -105,6 +105,7 @@ def _run_all_checks(paper, config: Config) -> list[CheckResult]:
         from paperfraud.checks.stats.fallacies import run_fallacies
         from paperfraud.checks.stats.sample_size import run_sample_size_check
         from paperfraud.checks.stats.p_hacking import run_p_hacking_check
+        from paperfraud.checks.stats.method_misuse import run_method_misuse
         from paperfraud.checks.bioinfo.western_blot import run_western_blot_check
         checks.extend([
             ("text.blacklist", run_blacklist),
@@ -114,6 +115,7 @@ def _run_all_checks(paper, config: Config) -> list[CheckResult]:
             ("stats.fallacies", run_fallacies),
             ("stats.sample_size", run_sample_size_check),
             ("stats.p_hacking", run_p_hacking_check),
+            ("stats.method_misuse", run_method_misuse),
             ("bioinfo.western_blot", run_western_blot_check),
         ])
 

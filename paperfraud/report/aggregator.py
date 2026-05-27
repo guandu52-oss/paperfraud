@@ -31,6 +31,7 @@ WEIGHTS: dict[str, float] = {
     "numbers.arithmetic": 0.8,
     "numbers.identical_values": 0.7,
     "bioinfo.western_blot": 0.6,
+    "stats.method_misuse": 0.75,
     "stats.p_hacking": 0.5,
     "stats.normality_claim": 0.4,
     "numbers.benford": 0.4,
