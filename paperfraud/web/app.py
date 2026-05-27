@@ -9,11 +9,14 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 # ── Load .env ────────────────────────────────────────────────────────────────
@@ -112,6 +115,129 @@ if _report_file is None:
             st.error(f"报告未找到: {qp}")
             st.stop()
 
+# ── Single-image forensic helper ──────────────────────────────────────────────
+
+
+def _generate_image_report(image_path: Path, output_dir: Path) -> Path:
+    """Run LUT + ELA + Clone on a single image, generate report.json.
+
+    Returns path to the generated report.json.
+    """
+    import cv2
+
+    from paperfraud.base import CheckResult
+    from paperfraud.checks.images.clone_detect import detect_clones, draw_clone_boxes
+    from paperfraud.checks.images.ela import compute_ela
+    from paperfraud.checks.images.lut import apply_lut
+    from paperfraud.report.aggregator import aggregate_results
+    from paperfraud.report.formatter import format_json
+
+    images_dir = output_dir / "images"
+    lut_dir = output_dir / "lut_output"
+    ela_dir = output_dir / "ela_output"
+    clone_dir = output_dir / "clone_output"
+    for d in [images_dir, lut_dir, ela_dir, clone_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    # Copy original to images/
+    stem = image_path.stem
+    img_dest = images_dir / image_path.name
+    if not img_dest.exists():
+        shutil.copy2(image_path, img_dest)
+
+    # ── LUT ──
+    lut_paths = apply_lut(image_path, lut_dir, luts=["fire", "royal", "viridis"])
+
+    # ── ELA ──
+    ela_result = compute_ela(image_path)
+    if "error" not in ela_result:
+        ela_path = ela_dir / f"{stem}_ela.png"
+        if not ela_path.exists():
+            cv2.imwrite(str(ela_path), ela_result["ela_image"])
+    ela_evidence = (
+        [f"均值差={ela_result.get('mean_diff', 0):.2f}, 标准差={ela_result.get('std_diff', 0):.2f}"]
+        if "error" not in ela_result
+        else [ela_result["error"]]
+    )
+
+    # ── Clone ──
+    clone_result = detect_clones(image_path)
+    if "error" not in clone_result:
+        n = clone_result.get("clone_count", 0)
+        if n > 0:
+            clone_path = clone_dir / f"{stem}_clone.png"
+            if not clone_path.exists():
+                draw_clone_boxes(
+                    image_path, clone_result["clones"],
+                    clone_path, clone_result.get("block_size", 32),
+                )
+    clone_evidence = (
+        [f"发现 {clone_result.get('clone_count', 0)} 对相似块"]
+        if "error" not in clone_result
+        else [clone_result["error"]]
+    )
+
+    # ── Build CheckResults ──
+    results: list[CheckResult] = [
+        CheckResult(
+            check_id="images.lut",
+            check_name="LUT 伪彩映射",
+            level="green",
+            verdict=f"已对图片应用 LUT 伪彩映射，输出 {len(lut_paths)} 张对比图",
+            evidence=[f"输出: {p.name}" for p in lut_paths],
+            confidence=0.5,
+            needs_human=True,
+            human_instruction="拼接区域在伪彩色下会出现不自然的颜色断层。注意区分 JPEG 8×8 压缩伪影方块。",
+        ),
+        CheckResult(
+            check_id="images.ela",
+            check_name="误差水平分析 (ELA)",
+            level="green",
+            verdict="已生成 ELA 热力图供人工审查",
+            evidence=ela_evidence,
+            confidence=0.4,
+            needs_human=True,
+            human_instruction="高亮区域表示压缩误差与周围不同，可能来自不同来源。",
+        ),
+        CheckResult(
+            check_id="images.clone_detect",
+            check_name="克隆区域检测",
+            level="green",
+            verdict="已检测图片并保存 Clone 检测图供人工审查",
+            evidence=clone_evidence,
+            confidence=0.7,
+            needs_human=True,
+            human_instruction="红框连线标记了哈希一致的图像块对，需人工确认。",
+        ),
+    ]
+
+    # ── Aggregate + format ──
+    aggregated = aggregate_results(results)
+    paper = SimpleNamespace(
+        title=f"单图取证: {image_path.name}",
+        journal="",
+        year=None,
+        authors=[],
+    )
+
+    image_artifacts: dict[str, list[str]] = {
+        "lut_output": sorted(
+            str(p.relative_to(output_dir)) for p in lut_dir.glob("*.png")
+        ),
+        "ela_output": sorted(
+            str(p.relative_to(output_dir)) for p in ela_dir.glob("*.png")
+        ),
+        "clone_output": sorted(
+            str(p.relative_to(output_dir)) for p in clone_dir.glob("*.png")
+        ),
+    }
+
+    json_str = format_json(aggregated, results, paper=paper, image_artifacts=image_artifacts)
+    report_path = output_dir / "report.json"
+    report_path.write_text(json_str, encoding="utf-8")
+    return report_path
+
+
 # ── Landing page (no report loaded) ──────────────────────────────────────────
 if _report_file is None:
     st.title("🔬 Paper Fraud Dashboard")
@@ -160,6 +286,8 @@ if _report_file is None:
     with col2:
         uploaded = st.file_uploader("或上传 JSON", type=["json"], label_visibility="collapsed")
 
+    st.caption("上传 JSON 仅能查看文本报告，图像取证需粘贴路径（图片目录不在上传文件中）。")
+
     if st.button("打开报告", type="primary") and path_input:
         resolved = _resolve(Path(path_input.strip()))
         if resolved:
@@ -173,6 +301,37 @@ if _report_file is None:
         tmp.write(uploaded.read())
         tmp.close()
         st.query_params["report"] = str(Path(tmp.name))
+        st.rerun()
+
+    # ── Image upload ─────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("**或上传单张图片进行图像取证**")
+    st.caption("上传后自动运行 LUT 伪彩映射 + ELA 误差分析 + 克隆区域检测")
+
+    uploaded_image = st.file_uploader(
+        "上传图片",
+        type=["png", "jpg", "jpeg", "tiff", "bmp", "webp"],
+        label_visibility="collapsed",
+    )
+
+    if uploaded_image is not None:
+        content = uploaded_image.read()
+        img_hash = hashlib.md5(content).hexdigest()[:8]
+        output_dir = Path("output") / f"_img_{img_hash}"
+        images_dir = output_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = Path(uploaded_image.name).suffix or ".png"
+        img_path = images_dir / f"input{suffix}"
+        if not img_path.exists():
+            img_path.write_bytes(content)
+
+        report_path = output_dir / "report.json"
+        if not report_path.exists():
+            with st.spinner("正在执行图像取证分析 (LUT 伪彩 / ELA 热力 / 克隆检测)..."):
+                report_path = _generate_image_report(img_path, output_dir)
+
+        st.query_params["report"] = str(report_path)
         st.rerun()
 
     if not _available_reports:
@@ -862,14 +1021,62 @@ def _comparison_viewer() -> None:
         st.info("未找到提取的图片。请使用 `--extract-images` 重新运行检测。")
         return
 
-    stems = sorted(
-        {p.stem for p in images_dir.glob("*.png")},
-        key=_natural_key,
-    )
+    # Collect all images (png, jpg, jpeg)
+    all_images: list[Path] = []
+    for ext in ("*.png", "*.jpg", "*.jpeg"):
+        all_images.extend(sorted(images_dir.glob(ext), key=lambda p: _natural_key(p.name)))
+    stems = sorted({p.stem for p in all_images}, key=_natural_key)
+
+    # ── Single-image mode: upload comparison image ─────────────────────────
     if len(stems) < 2:
-        st.info("至少需要 2 张图片才能进行比对。")
+        st.info("当前仅有 1 张图片。上传第二张图片进行 Sync/Blink/Diff 比对。")
+
+        if not stems:
+            st.warning("未找到任何图片。")
+            return
+
+        # Image A: the only available image
+        stem_a = stems[0]
+        img_a_path = next(
+            (images_dir / f"{stem_a}{ext}" for ext in (".png", ".jpg", ".jpeg")
+             if (images_dir / f"{stem_a}{ext}").exists()),
+            None,
+        )
+        if img_a_path is None:
+            st.error("无法找到图片文件。")
+            return
+
+        st.caption(f"**图片 A（原图）：** {img_a_path.name}")
+
+        # Image B: upload
+        uploaded_b = st.file_uploader(
+            "上传比对图片（图片 B）",
+            type=["png", "jpg", "jpeg", "tiff", "bmp", "webp"],
+            key="cmp_upload_b",
+        )
+
+        if uploaded_b is None:
+            return
+
+        # Save uploaded comparison image to a temp file
+        cmp_dir = report_dir / "_comparison"
+        cmp_dir.mkdir(exist_ok=True)
+        suffix = Path(uploaded_b.name).suffix or ".png"
+        img_b_path = cmp_dir / f"comparison{suffix}"
+        img_b_path.write_bytes(uploaded_b.read())
+
+        st.success(f"已加载比对图片: {uploaded_b.name}")
+        st.markdown("---")
+        st.caption(
+            "**Sync 同步放大镜** — 滚轮缩放、拖拽平移，两图同步。"
+            " **Blink 闪烁对比** — 原位交替闪烁，拼接边缘最易察觉。"
+            " **Diff 差异混合** — 像素级减法热力图。"
+            " **LUT 伪彩映射** — 伪彩色放大灰度断层。"
+        )
+        _comparison_component(img_a_path, img_b_path)
         return
 
+    # ── Multi-image mode: select two images ─────────────────────────────────
     col_a, col_b = st.columns(2)
     with col_a:
         img_a_stem = st.selectbox(
@@ -889,8 +1096,19 @@ def _comparison_viewer() -> None:
         )
 
     if img_a_stem and img_b_stem:
-        img_a_path = images_dir / f"{img_a_stem}.png"
-        img_b_path = images_dir / f"{img_b_stem}.png"
+        # Resolve paths (handle different extensions)
+        img_a_path = None
+        img_b_path = None
+        for ext in (".png", ".jpg", ".jpeg"):
+            candidate = images_dir / f"{img_a_stem}{ext}"
+            if candidate.exists() and img_a_path is None:
+                img_a_path = candidate
+            candidate = images_dir / f"{img_b_stem}{ext}"
+            if candidate.exists() and img_b_path is None:
+                img_b_path = candidate
+        if img_a_path is None or img_b_path is None:
+            st.error("无法找到图片文件。")
+            return
 
         if img_a_stem == img_b_stem:
             st.warning("选择了相同的图片，请选择不同的图片进行比对。")
@@ -1072,6 +1290,10 @@ if _reports_dir is not None and _available_reports:
         st.rerun()
 
     st.sidebar.markdown("---")
+
+if st.sidebar.button("🏠 返回首页", use_container_width=True):
+    st.query_params.clear()
+    st.rerun()
 
 page = st.sidebar.radio("导航", [
     "📊 检测总览",
