@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from paperfraud.base import CheckResult, ParsedPaper
 from paperfraud.config import Config
 from paperfraud.review.prompts import SYSTEM_PROMPT, build_review_prompt
+from paperfraud.review.pubpeer import search_pubpeer, format_pubpeer_context
 
 
 @dataclass
@@ -61,8 +62,21 @@ def run_llm_review(
     """Run LLM qualitative review on the detection results.
 
     Dispatches to the appropriate provider based on config.llm_provider.
+    Optionally searches PubPeer for existing community comments on the paper.
     """
-    user_prompt = build_review_prompt(paper, aggregated, results)
+    # Search PubPeer for existing comments
+    pubpeer_context = ""
+    if not config.no_external:
+        try:
+            pubpeer_result = search_pubpeer(
+                title=paper.title,
+                doi=paper.doi or "",
+            )
+            pubpeer_context = format_pubpeer_context(pubpeer_result)
+        except Exception:
+            pass
+
+    user_prompt = build_review_prompt(paper, aggregated, results, pubpeer_context)
 
     provider = config.llm_provider or "deepseek"
 

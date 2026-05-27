@@ -39,6 +39,33 @@ SYSTEM_PROMPT = """你是一位学术论文造假审查专家。你会收到一�
 - 若论文将技术重复当作生物学重复来跑统计检验（伪重复/pseudoreplication），标记为 true_positive
 - 若原文声明了技术重复但在其他段落使用了足够的生物学重复，标记为 false_alarm
 
+### 单细胞/scRNA-seq 领域专项审查
+当论文涉及单细胞测序数据时，额外关注以下维度：
+
+**细胞群体定义的严谨性**
+- 是否提供了明确的 marker 基因组合来界定每个 cluster/细胞类型？
+- 命名（如 MALP/LMP/EMP）是否仅靠 trajectory analysis，还是有线粒体追踪/移植实验等湿实验功能验证？
+- 如果定义仅依赖 bioinformatic 推断（trajectory/RNA velocity），不应将其作为"既定事实"陈述
+
+**组织解离来源的潜在污染**
+- scRNA-seq 需要酶解消化组织→ 骨膜（periosteum）、皮质骨表面细胞可能被混入骨髓细胞悬液
+- 如果论文定义的细胞群体表达已知的骨膜/肌腱标志物（如 Scx、Tnmd、Ctsk），需质疑是否为骨膜祖细胞污染
+- FACS 分选策略（如 CD45-Ter119-CD31-）无法区分骨髓基质细胞和骨膜来源细胞
+
+**谱系示踪与定义的内部一致性**
+- 如果论文用某 Cre 小鼠（如 Adipoq-CreER、αSMA-CreER）做 lineage tracing，结论是否与正文中对该细胞群体的定义自洽？
+- 例如：定义 X 细胞为"可成骨的双向祖细胞"，但 X-CreER 示踪几乎不标记成骨细胞 → 严重矛盾
+
+**与既有命名体系的关系**
+- 是否引用了领域内已被广泛接受的命名体系（如 Lepr+ MSC、CAR cells、CXCL12-abundant reticular cells）？
+- 如果提出新命名（如 MALP/LMP/EMP），是否与既有体系进行了系统比较？是否存在"换壳重命名"嫌疑？
+- 不断引入新缩写而回避与已有命名的关系→ 可疑
+
+**数据可复现性**
+- 是否提供了 GEO/SRA 登录号？
+- 分析代码是否公开（GitHub repo）？
+- 关键 marker gene 表达是否在公开数据（如 Single Cell Portal）中可独立验证？
+
 ### 跨信号关联
 - ≥2 个信号指向同一段落同一组数据 → 互相印证，可信度显著提升
 - 孤立信号来自 PDF 文本提取噪声（行内换行导致 p 值被分割、连字符截断等）→ 倾向于假阳性
@@ -169,13 +196,15 @@ def _extract_evidence_paragraphs(
 
 
 def build_review_prompt(
-    paper: ParsedPaper, aggregated: dict, results: list[CheckResult]
+    paper: ParsedPaper, aggregated: dict, results: list[CheckResult],
+    pubpeer_context: str = "",
 ) -> str:
     """Build the user prompt for LLM review.
 
     Key changes from v1:
       - Methods/Results keyword-targeted paragraphs replace blind abstract truncation
       - Evidence injection carries section labels for context
+      - Optional PubPeer context for papers with existing community comments
     """
     sections = []
 
@@ -217,6 +246,11 @@ def build_review_prompt(
         abstract = paper.abstract[:1500]
         sections.append("# 摘要（仅作概览参考）")
         sections.append(abstract)
+        sections.append("")
+
+    # ── PubPeer context (if available) ──────────────────────────────────
+    if pubpeer_context:
+        sections.append(pubpeer_context)
         sections.append("")
 
     # ── Signal review ───────────────────────────────────────────────────
