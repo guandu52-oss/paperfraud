@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,16 @@ from paperfraud.base import CheckResult
 from paperfraud.config import Config
 from paperfraud.parser.engine import parse_pdf
 from paperfraud.report.aggregator import aggregate_results
+
+# ── Load .env (no extra dependencies) ────────────────────────────────────────
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+if _ENV_FILE.exists():
+    for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _key, _, _val = _line.partition("=")
+            if _key.strip() not in os.environ:
+                os.environ[_key.strip()] = _val.strip().strip("\"'")
 from paperfraud.report.formatter import format_json, format_markdown
 
 app = typer.Typer(
@@ -304,7 +315,7 @@ def check(
 
     # Launch Streamlit if --web
     if config.launch_web and config.output_dir:
-        _launch_streamlit(Path(config.output_dir) / "report.json", web_port)
+        _launch_streamlit(report_path=Path(config.output_dir) / "report.json", port=web_port)
 
 
 def _extract_figure_captions(pdf_path: Path) -> dict[str, dict]:
@@ -336,9 +347,17 @@ def _extract_figure_captions(pdf_path: Path) -> dict[str, dict]:
     return captions
 
 
-def _launch_streamlit(report_path: Path, port: int = 8501) -> None:
-    """Launch Streamlit dashboard pointing at the given report."""
+def _launch_streamlit(report_path: Path | None = None, reports_dir: Path | None = None, port: int = 8501) -> None:
+    """Launch Streamlit dashboard.
+
+    Args:
+        report_path: Single report.json to load (--report mode).
+        reports_dir: Directory to scan for report.json files (--reports-dir mode).
+        port: Streamlit server port.
+    """
     import os
+    import socket
+    import threading
     import webbrowser
 
     app_path = Path(__file__).resolve().parent / "web" / "app.py"
@@ -347,29 +366,51 @@ def _launch_streamlit(report_path: Path, port: int = 8501) -> None:
         console.print(f"[red]Streamlit app 不存在: {app_path}[/red]")
         return
 
-    url = f"http://localhost:{port}/?report={report_path}"
+    # ── Port detection ────────────────────────────────────────────────────
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    port_in_use = sock.connect_ex(("localhost", port)) == 0
+    sock.close()
 
-    console.print(f"\n[bold green]启动 Streamlit Dashboard...[/bold green]")
-    console.print(f"[dim]报告: {report_path}[/dim]")
-    console.print(f"[dim]访问: {url}[/dim]")
-    console.print("[dim]按 Ctrl+C 退出[/dim]\n")
+    if port_in_use:
+        console.print(
+            f"[yellow]端口 {port} 已被占用，Web UI 可能已在运行。"
+            f"请直接访问 http://localhost:{port}[/yellow]"
+        )
+        webbrowser.open(f"http://localhost:{port}")
+        return
 
-    env = os.environ.copy()
-    env["PAPERFRAUD_REPORT_PATH"] = str(report_path)
-
-    # Open browser after a short delay (streamlit needs time to start)
-    import threading
-    def _open_browser():
-        import time
-        time.sleep(3)
-        webbrowser.open(url)
-    threading.Thread(target=_open_browser, daemon=True).start()
-
-    subprocess.run([
+    # ── Build streamlit args ──────────────────────────────────────────────
+    streamlit_args = [
         sys.executable, "-m", "streamlit", "run",
         str(app_path),
         "--server.port", str(port),
-    ], env=env)
+        "--",
+    ]
+    if reports_dir is not None:
+        streamlit_args.extend(["--reports-dir", str(reports_dir)])
+        url = f"http://localhost:{port}"
+    elif report_path is not None:
+        streamlit_args.extend(["--report", str(report_path)])
+        url = f"http://localhost:{port}"
+    else:
+        url = f"http://localhost:{port}"
+
+    console.print(f"\n[bold green]启动 Streamlit Dashboard...[/bold green]")
+    if report_path:
+        console.print(f"[dim]报告: {report_path}[/dim]")
+    if reports_dir:
+        console.print(f"[dim]报告目录: {reports_dir}[/dim]")
+    console.print(f"[dim]访问: {url}[/dim]")
+    console.print("[dim]按 Ctrl+C 退出[/dim]\n")
+
+    # Open browser after streamlit starts
+    def _open_browser():
+        import time
+        time.sleep(4)
+        webbrowser.open(url)
+    threading.Thread(target=_open_browser, daemon=True).start()
+
+    subprocess.run(streamlit_args)
 
 
 def _print_terminal_report(aggregated: dict, results: list[CheckResult], paper):
@@ -608,33 +649,35 @@ def review(
 
 
 @app.command()
+@app.command()
 def serve(
-    report_path: Path = typer.Argument(..., help="Path to report.json or output directory"),
+    directory: Path = typer.Argument(..., help="Directory containing report.json files (e.g. output/)"),
     port: int = typer.Option(8501, "--port", "-p", help="Streamlit server port"),
 ):
-    """Launch Streamlit dashboard for an existing report."""
-    # Accept either a report.json file or a directory containing one
-    if report_path.is_dir():
-        candidate = report_path / "report.json"
-        if candidate.exists():
-            report_path = candidate
-        else:
-            console.print(f"[red]目录下未找到 report.json: {report_path}[/red]")
-            raise typer.Exit(1)
+    """Launch Streamlit dashboard with multi-report switching.
 
-    if not report_path.exists():
-        console.print(f"[red]报告文件不存在: {report_path}[/red]")
+    Scans DIRECTORY recursively for report.json files and shows all
+    detected papers in a sidebar dropdown for quick switching.
+    """
+    if not directory.is_dir():
+        console.print(f"[red]目录不存在: {directory}[/red]")
         raise typer.Exit(1)
 
-    # Validate it's valid JSON
-    import json as _json
-    try:
-        _json.loads(report_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        console.print(f"[red]无法解析报告 JSON: {e}[/red]")
+    # Scan for report.json files (recursive, max 3 levels)
+    reports = list(directory.rglob("report.json"))
+    # Filter: only keep reports within 3 levels of directory
+    reports = [r for r in reports if len(r.relative_to(directory).parts) <= 3]
+
+    if not reports:
+        console.print(f"[yellow]目录下未找到 report.json 文件: {directory}[/yellow]")
+        console.print("[dim]提示：先运行 paperfraud check paper.pdf --output-dir output/<name>/[/dim]")
         raise typer.Exit(1)
 
-    _launch_streamlit(report_path, port)
+    console.print(f"[dim]扫描到 {len(reports)} 个报告[/dim]")
+    for r in reports:
+        console.print(f"  [dim]- {r}[/dim]")
+
+    _launch_streamlit(reports_dir=directory, port=port)
 
 
 def main():

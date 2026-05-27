@@ -3,6 +3,7 @@
 Usage:
     streamlit run paperfraud/web/app.py
     streamlit run paperfraud/web/app.py -- --report path/to/report.json
+    streamlit run paperfraud/web/app.py -- --reports-dir output/
     http://localhost:8501/?report=path/to/report.json
 """
 
@@ -14,6 +15,16 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+# ── Load .env (no extra dependencies) ────────────────────────────────────────
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
+if _ENV_FILE.exists():
+    for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _key, _, _val = _line.partition("=")
+            if _key.strip() not in os.environ:
+                os.environ[_key.strip()] = _val.strip().strip("\"'")
 
 import streamlit as st
 
@@ -27,6 +38,8 @@ st.set_page_config(
 
 # ── Resolve report path ──────────────────────────────────────────────────────
 _report_file: Path | None = None
+_reports_dir: Path | None = None
+_available_reports: list[dict[str, Any]] = []  # [{path, title, journal, year}, ...]
 
 
 def _resolve(p: Path) -> Path | None:
@@ -37,18 +50,58 @@ def _resolve(p: Path) -> Path | None:
     return p if p.exists() else None
 
 
-# Priority 1: CLI -- --report or PAPERFRAUD_REPORT_PATH env var
+def _scan_reports(base_dir: Path) -> list[dict[str, Any]]:
+    """Scan directory for report.json files and extract metadata."""
+    reports = []
+    for rp in base_dir.rglob("report.json"):
+        if len(rp.relative_to(base_dir).parts) > 3:
+            continue
+        try:
+            data = json.loads(rp.read_text(encoding="utf-8"))
+            summary = data.get("summary", {})
+            reports.append({
+                "path": str(rp),
+                "title": summary.get("title", rp.parent.name) or rp.parent.name,
+                "journal": summary.get("journal", ""),
+                "year": summary.get("year"),
+                "risk_score": summary.get("risk_score", 0),
+                "overall_level": summary.get("overall_level", "green"),
+            })
+        except Exception:
+            reports.append({
+                "path": str(rp),
+                "title": rp.parent.name,
+                "journal": "",
+                "year": None,
+                "risk_score": 0,
+                "overall_level": "error",
+            })
+    reports.sort(key=lambda r: r.get("risk_score", 0), reverse=True)
+    return reports
+
+
+# Priority 1: CLI -- --report / --reports-dir
 _cli_arg: str | None = None
+_reports_dir_arg: str | None = None
 try:
     argv = sys.argv
     for i, a in enumerate(argv):
         if a == "--report" and i + 1 < len(argv):
             _cli_arg = argv[i + 1]
-            break
+        if a == "--reports-dir" and i + 1 < len(argv):
+            _reports_dir_arg = argv[i + 1]
 except Exception:
     pass
 if not _cli_arg:
     _cli_arg = os.environ.get("PAPERFRAUD_REPORT_PATH", "") or None
+
+if _reports_dir_arg:
+    _reports_dir = Path(_reports_dir_arg)
+    if _reports_dir.is_dir():
+        _available_reports = _scan_reports(_reports_dir)
+    else:
+        st.error(f"报告目录不存在: {_reports_dir_arg}")
+        _reports_dir = None
 
 if _cli_arg:
     _report_file = _resolve(Path(_cli_arg))
@@ -68,8 +121,33 @@ if _report_file is None:
 # ── Landing page (no report loaded) ──────────────────────────────────────────
 if _report_file is None:
     st.title("🔬 Paper Fraud Dashboard")
-    st.markdown("### 打开一份检测报告")
 
+    if _available_reports:
+        # Multi-report mode: show list of available reports
+        st.markdown("### 已检测的论文")
+        st.markdown(f"共 {len(_available_reports)} 篇报告，点击可打开：")
+        for r in _available_reports:
+            level_emoji = {"red": "🔴", "orange": "🟠", "yellow": "🟡", "green": "🟢", "error": "⚪"}
+            emoji = level_emoji.get(r["overall_level"], "⚪")
+            score = r.get("risk_score", 0)
+            score_str = f" — 风险评分 {score:.0f}/100" if score > 0 else ""
+            meta = []
+            if r.get("journal"):
+                meta.append(r["journal"])
+            if r.get("year"):
+                meta.append(str(r["year"]))
+            meta_str = f" ({', '.join(meta)})" if meta else ""
+
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.markdown(f"{emoji} **{r['title'][:120]}**{meta_str}{score_str}")
+            with col2:
+                if st.button("打开", key=f"open_{r['path']}"):
+                    st.query_params["report"] = r["path"]
+                    st.rerun()
+            st.divider()
+
+    st.markdown("### 或手动打开一份检测报告")
     st.markdown(
         "**方式 1：URL 参数**  \n"
         "在地址栏输入：`http://localhost:8501/?report=<路径>`  \n"
@@ -92,7 +170,7 @@ if _report_file is None:
         resolved = _resolve(Path(path_input.strip()))
         if resolved:
             st.query_params["report"] = str(resolved)
-            st.stop()
+            st.rerun()
         else:
             st.error(f"文件不存在: {path_input.strip()}")
 
@@ -101,9 +179,10 @@ if _report_file is None:
         tmp.write(uploaded.read())
         tmp.close()
         st.query_params["report"] = str(Path(tmp.name))
-        st.stop()
+        st.rerun()
 
-    st.info("请输入报告路径、上传文件，或使用 URL 参数。")
+    if not _available_reports:
+        st.info("请输入报告路径、上传文件，或使用 URL 参数。")
     st.stop()
 
 # ── Load report JSON ─────────────────────────────────────────────────────────
@@ -632,9 +711,165 @@ def _comparison_viewer() -> None:
         )
 
 
+# ── Interactive Chat ─────────────────────────────────────────────────────────
+
+def _interactive_chat(report: dict, summary: dict, checks: list) -> None:
+    """LLM-powered Q&A page. Report JSON is injected as system context;
+    conversation history stays clean (no JSON duplication)."""
+    import os
+
+    from paperfraud.review.prompts import INTERACTIVE_CHAT_PROMPT
+
+    st.subheader("💬 交互问答")
+    st.caption("基于当前检测报告追问细节——为什么某个信号触发？证据链是否可靠？")
+
+    # ── Check API key ────────────────────────────────────────────────────
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        st.warning("未设置 API Key。请设置 `DEEPSEEK_API_KEY`、`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY` 环境变量。")
+        return
+
+    provider = "deepseek" if os.environ.get("DEEPSEEK_API_KEY") else (
+        "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"
+    )
+
+    # ── Build system context (report JSON, once) ──────────────────────────
+    report_context = json.dumps({
+        "summary": summary,
+        "checks": [
+            {
+                "check_id": c.get("check_id", ""),
+                "check_name": c.get("check_name", ""),
+                "level": c.get("level", ""),
+                "verdict": c.get("verdict", ""),
+                "evidence": c.get("evidence", [])[:3],
+                "confidence": c.get("confidence", 1.0),
+            }
+            for c in checks
+        ],
+        "risk_breakdown": summary.get("risk_breakdown", {}),
+    }, indent=2, ensure_ascii=False)
+
+    system_msg = INTERACTIVE_CHAT_PROMPT + "\n\n" + report_context
+
+    # ── Init session messages (no report data in history) ─────────────────
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    # ── Render history ────────────────────────────────────────────────────
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # ── Chat input ────────────────────────────────────────────────────────
+    if prompt := st.chat_input("输入你的问题，比如：为什么 method_misuse 触发了？"):
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("思考中..."):
+                response_text = _call_chat_llm(system_msg, st.session_state.chat_messages, provider)
+            st.markdown(response_text)
+
+        st.session_state.chat_messages.append({"role": "assistant", "content": response_text})
+
+    # ── Clear button ──────────────────────────────────────────────────────
+    if st.session_state.chat_messages and st.button("清空对话"):
+        st.session_state.chat_messages = []
+        st.rerun()
+
+
+def _call_chat_llm(system_msg: str, messages: list[dict], provider: str) -> str:
+    """Call LLM for interactive chat. System message carries report context;
+    messages carry only the conversation history."""
+    import os
+
+    if provider == "deepseek":
+        from openai import OpenAI
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": system_msg},
+            ] + [
+                {"role": m["role"], "content": m["content"]}
+                for m in messages
+            ],
+            temperature=0,
+            max_tokens=2048,
+        )
+        return response.choices[0].message.content or ""
+
+    elif provider == "anthropic":
+        from anthropic import Anthropic
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        client = Anthropic(api_key=api_key)
+        # Anthropic doesn't have system-message-only; merge into user content
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            system=system_msg,
+            messages=[
+                {"role": m["role"], "content": m["content"]}
+                for m in messages
+            ],
+            temperature=0,
+            max_tokens=2048,
+        )
+        return msg.content[0].text if msg.content else ""
+
+    else:
+        from openai import OpenAI
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_msg},
+            ] + [
+                {"role": m["role"], "content": m["content"]}
+                for m in messages
+            ],
+            temperature=0,
+            max_tokens=2048,
+        )
+        return response.choices[0].message.content or ""
+
+
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
 st.sidebar.title("🔬 Paper Fraud Detection")
+
+# ── Multi-report selector ─────────────────────────────────────────────────
+if _reports_dir is not None and _available_reports:
+    # Build display labels
+    report_options = {}
+    for r in _available_reports:
+        score = r.get("risk_score", 0)
+        label = f"{r['title'][:80]} ({score:.0f}分)" if score > 0 else r['title'][:80]
+        report_options[label] = r["path"]
+
+    current_path = str(_report_file) if _report_file else ""
+    current_label = None
+    for label, path in report_options.items():
+        if path == current_path:
+            current_label = label
+            break
+
+    selected_label = st.sidebar.selectbox(
+        "📄 切换报告",
+        list(report_options.keys()),
+        index=list(report_options.keys()).index(current_label) if current_label else 0,
+        key="report_selector",
+    )
+
+    # On selection change, update URL and rerun
+    if report_options[selected_label] != current_path:
+        st.query_params["report"] = report_options[selected_label]
+        st.rerun()
+
+    st.sidebar.markdown("---")
 
 page = st.sidebar.radio("导航", [
     "📊 检测总览",
@@ -643,6 +878,7 @@ page = st.sidebar.radio("导航", [
     "🟡 Yellow 信号",
     "🖼️ 图像取证",
     "🔍 人工审查工作台",
+    "💬 交互问答",
     "🤖 LLM 审查",
     "📝 PubPeer 草稿",
     "📥 导出报告",
@@ -726,6 +962,9 @@ elif page == "🖼️ 图像取证":
 
 elif page == "🔍 人工审查工作台":
     _comparison_viewer()
+
+elif page == "💬 交互问答":
+    _interactive_chat(report, summary, checks)
 
 elif page == "🤖 LLM 审查":
     if not llm_review:

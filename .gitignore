@@ -31,3 +31,4 @@ paperfraud_output/
 *.swp
 *.swo
 *~
+.env
