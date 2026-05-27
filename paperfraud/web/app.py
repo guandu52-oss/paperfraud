@@ -16,15 +16,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-# ── Load .env (no extra dependencies) ────────────────────────────────────────
-_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
-if _ENV_FILE.exists():
-    for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _key, _, _val = _line.partition("=")
-            if _key.strip() not in os.environ:
-                os.environ[_key.strip()] = _val.strip().strip("\"'")
+# ── Load .env ────────────────────────────────────────────────────────────────
+from paperfraud.config import load_dotenv
+load_dotenv()
 
 import streamlit as st
 
@@ -392,7 +386,7 @@ def _encode_data_url(path: Path, max_width: int | None = None, *, prefer_jpeg: b
     Args:
         path: Image file path.
         max_width: If set and image is wider, resize to this width.
-        prefer_jpeg: If True and the image is RGB, use JPEG quality=85
+        prefer_jpeg: If True and the image is RGB, use JPEG quality=92
             instead of PNG. JPEG reduces size by ~70% vs PNG for photos,
             critical for avoiding 10MB+ HTML over WebSocket.
 
@@ -411,7 +405,7 @@ def _encode_data_url(path: Path, max_width: int | None = None, *, prefer_jpeg: b
 
     buf = BytesIO()
     if prefer_jpeg and img.mode == "RGB":
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="JPEG", quality=92)
         mime = "image/jpeg"
     else:
         img.save(buf, format="PNG")
@@ -437,20 +431,20 @@ def _render_zoom_iframe(ref_path: Path, images: list[tuple[str, Path]], key: str
 
     from PIL import Image
 
-    # ── Reference thumbnail (300px, PNG) ─────────────────────────────────
-    ref_data_url = _encode_data_url(ref_path, max_width=300, prefer_jpeg=False)
+    # ── Reference thumbnail (same max as analysis, PNG) ──────────────────
+    ref_data_url = _encode_data_url(ref_path, max_width=2000, prefer_jpeg=False)
     ref_img = Image.open(ref_path)
-    ref_w = min(300, ref_img.width)
+    ref_w = min(408, ref_img.width)
     ref_h = int(ref_img.height * (ref_w / ref_img.width))
 
-    # ── Analysis images (max 1200px, JPEG for RGB) ───────────────────────
+    # ── Analysis images (max 2000px, JPEG Q92 for forensic detail) ───────
     img_entries: list[dict] = []
     for label, img_path in images:
         if img_path.exists():
             img_entries.append({
                 "label": label,
                 "filename": img_path.name,
-                "dataUrl": _encode_data_url(img_path, max_width=1200, prefer_jpeg=True),
+                "dataUrl": _encode_data_url(img_path, max_width=2000, prefer_jpeg=True),
             })
 
     images_json = json.dumps(img_entries)
@@ -462,8 +456,8 @@ def _render_zoom_iframe(ref_path: Path, images: list[tuple[str, Path]], key: str
   body {{ background:#0e1117; color:#fafafa; font-family:system-ui,sans-serif; user-select:none; }}
   #s {{ font-size:11px; color:#aaa; padding:4px 8px; background:#1a1a2e; border-bottom:1px solid #333; }}
   .main {{ display:flex; gap:0; }}
-  .left {{ flex:0 0 300px; padding:6px; }}
-  .left canvas {{ display:block; cursor:crosshair; border-radius:4px; }}
+  .left {{ flex:0 0 420px; padding:6px; }}
+  .left canvas {{ display:block; max-width:100%; cursor:crosshair; border-radius:4px; }}
   .right {{ flex:1; min-width:0; padding:6px; display:flex; flex-direction:column; gap:6px; }}
   .grid {{ display:grid; gap:6px; }}
   .panel {{ background:#1a1a2e; border-radius:6px; overflow:hidden; }}
@@ -542,10 +536,16 @@ function renderZoomToCanvas(imgObj, canvas, cropPct) {{
     var sw = cropPct.w / 100 * iw;
     var sh = cropPct.h / 100 * ih;
     ctx.drawImage(imgObj, sx, sy, sw, sh, 0, 0, cw, ch);
+    // Match panel aspect ratio to crop region
+    canvas.style.aspectRatio = (cropPct.w / cropPct.h).toFixed(4);
   }} else {{
     // No crop or image not yet loaded → show full image
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(imgObj, 0, 0, cw, ch);
+    // Use image's natural aspect ratio
+    if (imgObj.naturalWidth && imgObj.naturalHeight) {{
+      canvas.style.aspectRatio = (imgObj.naturalWidth / imgObj.naturalHeight).toFixed(4);
+    }}
   }}
 }}
 
@@ -589,8 +589,7 @@ function buildZoomPanels() {{
     var cv = document.createElement('canvas');
     cv.style.display = 'block';
     cv.style.width = '100%';
-    // Fixed aspect ratio for zoom panels
-    cv.style.aspectRatio = '4 / 3';
+    // Aspect ratio set dynamically in renderZoomToCanvas (from image or crop)
     panel.appendChild(label);
     panel.appendChild(cv);
     gridEl.appendChild(panel);
@@ -598,8 +597,9 @@ function buildZoomPanels() {{
     var img = new Image();
     img.onload = function(canvas, imgObj) {{
       return function() {{
-        // If the user already drew a box before this image loaded,
-        // render the crop instead of the full image (race-condition fix).
+        // renderZoomToCanvas sets aspectRatio from image dimensions (no crop)
+        // or crop rectangle.  Handles race: if user drew a box before image
+        // loaded, currentCropPct will be non-null.
         requestAnimationFrame(function() {{
           renderZoomToCanvas(imgObj, canvas, currentCropPct);
         }});
@@ -613,8 +613,18 @@ function buildZoomPanels() {{
 }}
 
 // ── Mouse events on reference canvas ────────────────────────────
+// Scale CSS-offset mouse coords to canvas-bitmap coords (needed when
+// canvas bitmap resolution differs from CSS display size, e.g. retina).
+function toBitmap(mx, my) {{
+  return {{
+    x: mx * refCanvas.width / refCanvas.offsetWidth,
+    y: my * refCanvas.height / refCanvas.offsetHeight
+  }};
+}}
+
 refCanvas.addEventListener('mousedown', function(e) {{
-  var mx = e.offsetX, my = e.offsetY;
+  var pt = toBitmap(e.offsetX, e.offsetY);
+  var mx = pt.x, my = pt.y;
   if (inside(mx, my)) {{
     dragging = true;
     dragOffX = mx - rect.x;
@@ -628,7 +638,8 @@ refCanvas.addEventListener('mousedown', function(e) {{
 }});
 
 refCanvas.addEventListener('mousemove', function(e) {{
-  var mx = e.offsetX, my = e.offsetY;
+  var pt = toBitmap(e.offsetX, e.offsetY);
+  var mx = pt.x, my = pt.y;
   if (drawing) {{
     rect.x = Math.min(startX, mx);
     rect.y = Math.min(startY, my);
@@ -976,9 +987,10 @@ def _call_chat_llm(system_msg: str, messages: list[dict], provider: str) -> str:
     if provider == "deepseek":
         from openai import OpenAI
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model=model,
             messages=[
                 {"role": "system", "content": system_msg},
             ] + [
@@ -993,10 +1005,11 @@ def _call_chat_llm(system_msg: str, messages: list[dict], provider: str) -> str:
     elif provider == "anthropic":
         from anthropic import Anthropic
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
         client = Anthropic(api_key=api_key)
         # Anthropic doesn't have system-message-only; merge into user content
         msg = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=model,
             system=system_msg,
             messages=[
                 {"role": m["role"], "content": m["content"]}
@@ -1010,9 +1023,10 @@ def _call_chat_llm(system_msg: str, messages: list[dict], provider: str) -> str:
     else:
         from openai import OpenAI
         api_key = os.environ.get("OPENAI_API_KEY", "")
+        model = os.environ.get("OPENAI_MODEL", "gpt-4o")
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=model,
             messages=[
                 {"role": "system", "content": system_msg},
             ] + [

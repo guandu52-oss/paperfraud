@@ -24,21 +24,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from paperfraud import __version__
 from paperfraud.base import CheckResult
-from paperfraud.config import Config
+from paperfraud.config import Config, load_dotenv
 from paperfraud.parser.engine import parse_paper
 from paperfraud.report.aggregator import aggregate_results
-
-# ── Load .env (no extra dependencies) ────────────────────────────────────────
-_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
-if _ENV_FILE.exists():
-    for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _key, _, _val = _line.partition("=")
-            if _key.strip() not in os.environ:
-                os.environ[_key.strip()] = _val.strip().strip("\"'")
 from paperfraud.report.formatter import format_json, format_markdown
+
+load_dotenv()
 
 app = typer.Typer(
     name="paperfraud",
@@ -46,6 +39,20 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def _version_callback(
+    version: bool = typer.Option(
+        False, "--version", "-V",
+        help="Show version and exit",
+        is_eager=True,
+    ),
+):
+    """Print version and exit. Only fires when no subcommand is given."""
+    if version:
+        console.print(f"paperfraud-detect {__version__}")
+        raise typer.Exit()
 
 
 def _build_config(
@@ -82,53 +89,74 @@ def _run_all_checks(paper, config: Config) -> list[CheckResult]:
 
     checks = []
 
-    from paperfraud.checks.numbers.py_statcheck import run_py_statcheck
-    from paperfraud.checks.numbers.grim import run_grim
-    from paperfraud.checks.numbers.digit_pref import run_digit_checks
-    from paperfraud.checks.numbers.arithmetic import run_arithmetic_check
-    from paperfraud.checks.numbers.benford import run_benford
-    from paperfraud.checks.numbers.identical_values import run_identical_values
+    # ── Numbers checks ─────────────────────────────────────────────────────
+    try:
+        from paperfraud.checks.numbers.py_statcheck import run_py_statcheck
+        from paperfraud.checks.numbers.grim import run_grim
+        from paperfraud.checks.numbers.digit_pref import run_digit_checks
+        from paperfraud.checks.numbers.arithmetic import run_arithmetic_check
+        from paperfraud.checks.numbers.benford import run_benford
+        from paperfraud.checks.numbers.identical_values import run_identical_values
+        checks.extend([
+            ("numbers.statcheck", run_py_statcheck),
+            ("numbers.grim", run_grim),
+            ("numbers.digit", run_digit_checks),
+            ("numbers.arithmetic", run_arithmetic_check),
+            ("numbers.benford", run_benford),
+            ("numbers.identical_values", run_identical_values),
+        ])
+    except Exception as e:
+        console.print(f"[red]✗ numbers 检测模块加载失败: {e}[/red]")
 
-    checks.extend([
-        ("numbers.statcheck", run_py_statcheck),
-        ("numbers.grim", run_grim),
-        ("numbers.digit", run_digit_checks),
-        ("numbers.arithmetic", run_arithmetic_check),
-        ("numbers.benford", run_benford),
-        ("numbers.identical_values", run_identical_values),
-    ])
-
+    # ── Image checks ───────────────────────────────────────────────────────
     if paper.image_paths:
-        from paperfraud.checks.images.lut import run_lut
-        from paperfraud.checks.images.clone_detect import run_clone_detect
-        from paperfraud.checks.images.ela import run_ela
-        checks.extend([
-            ("images.lut", run_lut),
-            ("images.clone_detect", run_clone_detect),
-            ("images.ela", run_ela),
-        ])
+        try:
+            from paperfraud.checks.images.lut import run_lut
+            from paperfraud.checks.images.clone_detect import run_clone_detect
+            from paperfraud.checks.images.ela import run_ela
+            checks.extend([
+                ("images.lut", run_lut),
+                ("images.clone_detect", run_clone_detect),
+                ("images.ela", run_ela),
+            ])
+        except Exception as e:
+            console.print(f"[red]✗ images 检测模块加载失败: {e}[/red]")
 
+    # ── Text / Stats / Bioinfo checks ──────────────────────────────────────
     if paper.full_text:
-        from paperfraud.checks.text.blacklist import run_blacklist
-        from paperfraud.checks.text.pvalue_camouflage import run_pvalue_camouflage
-        from paperfraud.checks.text.title_conclusion_gap import run_title_conclusion_gap
-        from paperfraud.checks.stats.normality_claim import run_normality_claim
-        from paperfraud.checks.stats.fallacies import run_fallacies
-        from paperfraud.checks.stats.sample_size import run_sample_size_check
-        from paperfraud.checks.stats.p_hacking import run_p_hacking_check
-        from paperfraud.checks.stats.method_misuse import run_method_misuse
-        from paperfraud.checks.bioinfo.western_blot import run_western_blot_check
-        checks.extend([
-            ("text.blacklist", run_blacklist),
-            ("text.pvalue_camouflage", run_pvalue_camouflage),
-            ("text.title_conclusion_gap", run_title_conclusion_gap),
-            ("stats.normality_claim", run_normality_claim),
-            ("stats.fallacies", run_fallacies),
-            ("stats.sample_size", run_sample_size_check),
-            ("stats.p_hacking", run_p_hacking_check),
-            ("stats.method_misuse", run_method_misuse),
-            ("bioinfo.western_blot", run_western_blot_check),
-        ])
+        try:
+            from paperfraud.checks.text.blacklist import run_blacklist
+            from paperfraud.checks.text.pvalue_camouflage import run_pvalue_camouflage
+            from paperfraud.checks.text.title_conclusion_gap import run_title_conclusion_gap
+            from paperfraud.checks.stats.normality_claim import run_normality_claim
+            from paperfraud.checks.stats.fallacies import run_fallacies
+            from paperfraud.checks.stats.sample_size import run_sample_size_check
+            from paperfraud.checks.stats.p_hacking import run_p_hacking_check
+            from paperfraud.checks.stats.method_misuse import run_method_misuse
+            from paperfraud.checks.bioinfo.western_blot import run_western_blot_check
+            checks.extend([
+                ("text.blacklist", run_blacklist),
+                ("text.pvalue_camouflage", run_pvalue_camouflage),
+                ("text.title_conclusion_gap", run_title_conclusion_gap),
+                ("stats.normality_claim", run_normality_claim),
+                ("stats.fallacies", run_fallacies),
+                ("stats.sample_size", run_sample_size_check),
+                ("stats.p_hacking", run_p_hacking_check),
+                ("stats.method_misuse", run_method_misuse),
+                ("bioinfo.western_blot", run_western_blot_check),
+            ])
+        except Exception as e:
+            console.print(f"[red]✗ text/stats/bioinfo 检测模块加载失败: {e}[/red]")
+
+    # Print head-up for slow image checks
+    image_check_ids = {"images.clone_detect", "images.ela", "images.lut"}
+    has_image_checks = any(cid in image_check_ids for cid, _ in checks)
+    if has_image_checks and paper.image_paths:
+        plural = "s" if len(paper.image_paths) != 1 else ""
+        console.print(
+            f"[dim]图像检测涉及 {len(paper.image_paths)} 张图片{plural}，"
+            f"clone_detect 可能耗时 1-3 分钟...[/dim]"
+        )
 
     with Progress(
         SpinnerColumn(),
@@ -167,7 +195,15 @@ def _run_all_checks(paper, config: Config) -> list[CheckResult]:
     return results
 
 
-@app.command()
+@app.command(
+    epilog=(
+        "示例:\n"
+        "  paperfraud check papers/paper.pdf\n"
+        "  paperfraud check papers/paper.pdf --extract-images --review -o output/demo\n"
+        "  paperfraud check papers/paper.docx --extract-images --no-web\n"
+        "  paperfraud check papers/paper.pdf --data-file data.csv --review"
+    ),
+)
 def check(
     target: str = typer.Argument(..., help="DOI or PDF file path"),
     output: str = typer.Option("terminal", "--output", "-o", help="Output format: terminal, json, markdown"),
@@ -749,6 +785,115 @@ def extract_images(
 
     if paper._tmp_dir:
         shutil.rmtree(paper._tmp_dir, ignore_errors=True)
+
+
+@app.command()
+def doctor():
+    """Check environment and dependencies — diagnose common setup issues."""
+    console.print()
+    console.print(Panel.fit(
+        "[bold]PaperFraud Detect — 环境检查[/bold]",
+        border_style="blue",
+    ))
+    console.print()
+
+    all_ok = True
+
+    # ── Python version ─────────────────────────────────────────────────────
+    py_version = sys.version_info
+    if py_version >= (3, 9):
+        console.print(f"  ✅ Python {py_version.major}.{py_version.minor}.{py_version.micro}")
+    else:
+        console.print(f"  ❌ Python {py_version.major}.{py_version.minor}.{py_version.micro}（需要 >= 3.9）")
+        console.print(f"     [修复] 请安装 Python 3.9 或更高版本: https://www.python.org/downloads/")
+        all_ok = False
+
+    # ── Core dependencies ──────────────────────────────────────────────────
+    core_deps = [
+        ("PyMuPDF", "fitz", "pip install PyMuPDF"),
+        ("numpy", "numpy", "pip install numpy"),
+        ("scipy", "scipy", "pip install scipy"),
+        ("Pillow", "PIL", "pip install Pillow"),
+        ("opencv-python-headless", "cv2", "pip install opencv-python-headless"),
+        ("typer", "typer", "pip install typer"),
+        ("rich", "rich", "pip install rich"),
+        ("Jinja2", "jinja2", "pip install Jinja2"),
+        ("httpx", "httpx", "pip install httpx"),
+        ("PyYAML", "yaml", "pip install PyYAML"),
+    ]
+    for name, import_name, fix_cmd in core_deps:
+        try:
+            __import__(import_name)
+            console.print(f"  ✅ {name}")
+        except ImportError:
+            console.print(f"  ❌ {name} 未安装")
+            console.print(f"     [修复] 请运行: {fix_cmd}")
+            all_ok = False
+
+    # ── Optional dependencies ──────────────────────────────────────────────
+    console.print()
+    console.print("[dim]可选依赖（增强功能）：[/dim]")
+    optional_deps = [
+        ("streamlit (Web UI)", "streamlit", "pip install streamlit"),
+        ("python-docx (Word 支持)", "docx", "pip install python-docx"),
+    ]
+    for name, import_name, fix_cmd in optional_deps:
+        try:
+            __import__(import_name)
+            console.print(f"  ✅ {name}")
+        except ImportError:
+            console.print(f"  ⚪ {name} — 未安装（可选）")
+            console.print(f"     [提示] 需要时请运行: {fix_cmd}")
+
+    # ── API Keys ───────────────────────────────────────────────────────────
+    console.print()
+    console.print("[dim]LLM API Key（至少配一个才能用 --review）：[/dim]")
+    api_keys = [
+        ("DEEPSEEK_API_KEY", "DeepSeek（推荐，便宜快速）"),
+        ("ANTHROPIC_API_KEY", "Anthropic Claude"),
+        ("OPENAI_API_KEY", "OpenAI GPT-4o"),
+    ]
+    any_key_set = False
+    for key_name, description in api_keys:
+        val = os.environ.get(key_name, "")
+        if val:
+            masked = val[:4] + "..." + val[-4:] if len(val) > 8 else "***"
+            console.print(f"  ✅ {key_name} = {masked}")
+            any_key_set = True
+        else:
+            console.print(f"  ⚪ {key_name} — 未设置")
+    if not any_key_set:
+        console.print("     [提示] 至少配置一个 API Key 以启用 LLM 审查功能")
+        console.print("     [修复] 请运行: export DEEPSEEK_API_KEY=sk-...")
+
+    # ── Papers directory ───────────────────────────────────────────────────
+    console.print()
+    papers_dir = Path(__file__).resolve().parent.parent / "papers"
+    if papers_dir.is_dir():
+        pdf_count = len(list(papers_dir.glob("**/*.pdf"))) + len(list(papers_dir.glob("**/*.docx")))
+        if pdf_count > 0:
+            console.print(f"  ✅ papers/ 目录: {pdf_count} 篇待检测论文")
+        else:
+            console.print(f"  ⚪ papers/ 目录存在但无 PDF/DOCX 文件")
+            console.print(f"     [提示] 将待检测论文放入: {papers_dir}")
+    else:
+        console.print(f"  ⚪ papers/ 目录不存在")
+        console.print(f"     [提示] 创建目录并将论文放入: {papers_dir}")
+
+    # ── Summary ────────────────────────────────────────────────────────────
+    console.print()
+    if all_ok:
+        console.print("[bold green]✅ 环境检查通过，可以开始使用！[/bold green]")
+        console.print()
+        console.print("[dim]快速开始:[/dim]")
+        if any_key_set:
+            console.print(f"[dim]  paperfraud check {papers_dir}/your-paper.pdf --extract-images --review -o output/demo[/dim]")
+        else:
+            console.print(f"[dim]  paperfraud check {papers_dir}/your-paper.pdf --extract-images -o output/demo[/dim]")
+    else:
+        console.print("[bold yellow]⚠️ 存在未解决的问题，请按上方 [修复] 提示操作[/bold yellow]")
+
+    console.print()
 
 
 def main():

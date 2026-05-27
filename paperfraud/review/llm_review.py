@@ -237,7 +237,7 @@ def _call_anthropic(user_prompt: str, config: Config) -> LLMReviewResult:
             "请运行: export ANTHROPIC_API_KEY=sk-ant-..."
         )
 
-    model = config.openai_model or "claude-sonnet-4-6"
+    model = config.anthropic_model or "claude-sonnet-4-6"
     client = Anthropic(api_key=api_key)
 
     response = client.messages.create(
