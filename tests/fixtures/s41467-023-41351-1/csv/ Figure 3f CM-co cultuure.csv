@@ -1,0 +1,9 @@
+Fiure 3f,Akt  phosphorylation fold change in C2C12 myotubes incubated with CM from HUVECs transfected with control-siRNA (n=8) VS Sirt1-siRNA (n=8). ,,,,,,,,,,,,,,,,,,
+,,C-CM1,C-CM2,C-CM3,C-CM4,C-CM5,C-CM6,C-CM7,C-CM8,,si-CM1,si-CM2,si-CM3,si-CM4,si-CM5,si-CM6,si-CM7,si-CM8,t test
+,Akt S473/Akt,0.961807,1.041605,0.996588,0.976092,0.950625,1.07328,1.060053,0.939947,,1.260769,1.315182,1.029454,1.278021,1.411803,1.475204,2.669696,2.123593,0.010730007212479981
+,Akt T308/Akt,0.958899,1.100659,0.940442,0.875896,0.983051,1.141052,1.041854,0.958146,,1.460704,1.541057,1.439064,1.769056,2.067996,1.950733,2.255984,1.857863,4.3533452489438295e-06
+,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,
+,GSK3β phosphorylation fold change in C2C12 myotubes incubated with CM from HUVECs transfected with control-siRNA (n=7) VS Sirt1-siRNA (n=7). ,,,,,,,,,,,,,,,,,,
+,,C-CM1,C-CM2,C-CM3,C-CM4,C-CM5,C-CM6,C-CM7,,,si-CM1,si-CM2,si-CM3,si-CM4,si-CM5,si-CM6,si-CM7,,
+,GSK3β S9/GSK3β,1,1.035212,0.964788,1.042659,0.957341,0.930974,1.069026,,,1.406683,1.83921,1.641408,1.827672,1.739507,1.127733,1.214767,,0.0004176964292850406

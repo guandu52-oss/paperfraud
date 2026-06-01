@@ -1,0 +1,24 @@
+figure 1 f ,Basal and insulin-stimulated Akt phosphorylation fold change in gastrocnemius muscle ,,,
+,Akt T308/Akt fold change,,,
+,Sirt1fl/fl,Sirt1fl/fl-insulin,KO,KO-insulin
+sample1,0.929495,3.937865,3.742971,6.11811
+sample2,1.009452,3.853475,2.430671,4.167408
+sample3,1.061053,3.775597,3.340369,5.549147
+sample4,0.842538,3.75372,2.314128,4.078968
+sample5,0.987725,2.97985,2.704421,5.125133
+sample6,1.169737,4.282104,,4.339118
+sample7,,,,4.378485
+,Sirt1fl/fl VS Sirt1fl/fl-insulin,Sirt1fl/fl VS KO,KO VS KO-insulin,Sirt1fl/fl insulinVS Sirt1fl/fl-insulin
+T test,2.9680138615801376e-08,3.535205577361058e-05,0.0016849662129746457,0.01437959236618335
+,,,,
+,Akt S473/Akt fold change,,,
+,Sirt1fl/fl,Sirt1fl/fl-insulin,KO,KO-insulin
+sample1,0.87789,4.197081,1.494373,6.233682
+sample2,1.12211,3.049925,1.786217,5.923627
+sample3,0.806468,2.371489,1.765109,4.079406
+sample4,1.181659,4.094586,1.797754,2.77156
+sample5,1.011872,2.437471,1.330651,3.709047
+sample6,,,,4.86296
+sample7,,,,3.898126
+,Sirt1fl/fl VS Sirt1fl/fl-insulin,Sirt1fl/fl VS KO,KO VS KO-insulin,Sirt1fl/fl insulinVS Sirt1fl/fl-insulin
+T test,0.0005149534149621605,0.0006665552455370165,0.0008826628239062117,0.04106727462684358

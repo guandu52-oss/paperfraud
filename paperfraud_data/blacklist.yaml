@@ -5,3 +5,9 @@ patterns:
   severity: medium
   source: https://pubpeer.com/publications/C715DC549CAAAC8BA5664557AB0D4C
   added: '2026-05-27'
+- pattern: 注意论文中是否频繁出现'To address...this study incorporates'等结构，可能为模板化写作。
+  category: blacklist
+  technique: 使用'To address these constraints, this study incorporates...'等标准句式，常见于论文工厂。
+  severity: medium
+  source: https://pubpeer.com/publications/BBECB2F25FAD8E02D030EBD0DDF663
+  added: '2026-05-28'

@@ -1,0 +1,16 @@
+,,,,,,,,,,,,,,,,
+Figure 3c,Akt phosphorylation fold change of gastrocnemius muscle in Sirt1flox/flox mice parabiosed with Sirt1flox/flox (n=6 pairs) VS KO mice (n=6 pairs),,,,,,,,,,,,,,,
+,,Sirt1fl/fl-Sirt1fl/fl 1,Sirt1fl/fl-Sirt1fl/fl 2,Sirt1fl/fl-Sirt1fl/fl 3,Sirt1fl/fl-Sirt1fl/fl 4,Sirt1fl/fl-Sirt1fl/fl 5,Sirt1fl/fl-Sirt1fl/fl 6,,Sirt1fl/fl-KO 1,Sirt1fl/fl-KO 2,Sirt1fl/fl-KO 3,Sirt1fl/fl-KO 4,Sirt1fl/fl-KO 5,Sirt1fl/fl-KO 6,,T test
+,Akt S473/Akt,1.017931,0.982069,0.915162,1.020964,0.895068,1.168805,,1.426209,1.465955,1.782941,2.632789,2.038227,1.31971,,0.0036697888483010754
+,Akt T308/Akt,1.129376,0.870624,1.297927,0.896407,0.829151,0.976516,,2.08532,2.023725,1.665072,3.132296,1.955699,1.359866,,0.002329424151630228
+,,,,,,,,,,,,,,,,
+,GSK3β phosphorylation fold change of gastrocnemius muscle in Sirt1flox/flox mice parabiosed with Sirt1flox/flox (n=6 pairs) VS KO mice (n=6 pairs),,,,,,,,,,,,,,,
+,GSK3β S9/GSK3β,,,,,,,,,,,,,,,
+,Sirt1fl/fl-Sirt1fl/fl ,Sirt1fl/fl-KO,,,,,,,,,,,,,,
+sample1,0.930568,1.640914,,,,,,,,,,,,,,
+sample2,1.069432,2.085932,,,,,,,,,,,,,,
+sample3,1.156953,1.96247,,,,,,,,,,,,,,
+sample4,0.736583,2.130359,,,,,,,,,,,,,,
+sample5,1.348451,1.642708,,,,,,,,,,,,,,
+sample6,0.758013,1.810808,,,,,,,,,,,,,,
+T test,5.2606396046603984e-05,,,,,,,,,,,,,,,

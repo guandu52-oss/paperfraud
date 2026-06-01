@@ -1,0 +1,9 @@
+Figure 5e,,,
+,Tβ4 concentration in CM (ng/ml),,
+,C-CM,Sirt1-si-CM,Sirt1-si-CM+IP Tβ4
+sample1,0.76,0.94,0.82
+sample2,0.8,0.97,0.89
+sample3,0.7,0.97,0.84
+sample4,0.78,0.92,
+,,,
+T test,0.00026035155113582754,0.0069327592562716,
